@@ -18,6 +18,7 @@ import (
 	"nexoraplan/internal/db"
 	"nexoraplan/internal/secret"
 	"nexoraplan/internal/server"
+	"nexoraplan/internal/sso"
 	"nexoraplan/internal/telegram"
 )
 
@@ -89,6 +90,7 @@ func run() error {
 		SetupCode: cfg.SetupCode,
 		Box:       box,
 		CalDAVURL: cfg.CalDAVURL,
+		SSO:       sso.New(cfg.OIDCIssuer, cfg.OIDCClientID, cfg.OIDCClientSecret, cfg.PublicURL),
 	})
 	if err != nil {
 		return err

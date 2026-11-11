@@ -83,6 +83,21 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
     - Schlägt das Senden fehl, kommt es beim nächsten Mal.
 - **Ausgehende Firewall:** Ist sie im Panel gesperrt, muss `api.telegram.org` erlaubt sein.
 
+## Anmeldung über nexora/auth
+
+Optional meldet man sich über die zentrale Anmeldung [nexora/auth](https://github.com/lunasans/nexoraauth) an
+(Knopf „Mit nexora/auth anmelden“). Im NexoraPanel auf der Seite dieser App **Mit nexora/auth anmelden →
+Verbinden** – das Panel legt dort die Anwendung an und trägt diese Werte ein:
+
+```
+PLAN_OIDC_ISSUER=https://auth.example.de
+PLAN_OIDC_CLIENT_ID=…
+PLAN_OIDC_CLIENT_SECRET=nxa_…
+```
+
+Rücksprung-Adresse: `<PLAN_PUBLIC_URL>/api/oidc/callback`. Zugeordnet wird über die von nexora/auth bestätigte E-Mail-Adresse des Kontos. Konten legt die Anmeldung nie neu an, und das bisherige Passwort
+bleibt als Notzugang. Wer sich anmelden darf, steuert nexora/auth über Gruppen (Verwaltung → Anwendungen).
+
 ## Projektstruktur
 
 | Pfad | Inhalt |

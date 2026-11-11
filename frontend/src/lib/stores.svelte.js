@@ -1,7 +1,7 @@
 // Gemeinsamer Zustand: angemeldeter Nutzer, Meldungen, Kalender und Kategorien.
 import { api } from './api.js';
 
-export const session = $state({ checked: false, user: null, setupNeeded: false });
+export const session = $state({ checked: false, user: null, setupNeeded: false, sso: false });
 
 export const toast = $state({ text: '', error: false });
 let toastTimer;

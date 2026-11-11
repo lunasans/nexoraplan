@@ -23,6 +23,7 @@ import (
 
 	"nexoraplan/internal/db"
 	"nexoraplan/internal/secret"
+	"nexoraplan/internal/sso"
 	"nexoraplan/web"
 )
 
@@ -39,6 +40,7 @@ type Server struct {
 	setupMu   sync.Mutex
 	bookMu    sync.Mutex // feste Buchungen nicht doppelt buchen
 	calendar  *calendarService
+	sso       *sso.Client
 	publicURL string
 	now       func() time.Time
 }
@@ -50,6 +52,8 @@ type Options struct {
 	Box       *secret.Box
 	// CalDAVURL: Vorschlag für die Kalender-Adresse (SOGo des Panels).
 	CalDAVURL string
+	// SSO: Anmeldung über nexora/auth (nil = aus)
+	SSO *sso.Client
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -69,6 +73,7 @@ func New(repo *db.Repo, opts Options) (*Server, error) {
 		limiter:   newLoginLimiter(),
 		setupCode: opts.SetupCode,
 		publicURL: strings.TrimRight(opts.PublicURL, "/"),
+		sso:       opts.SSO,
 		now:       time.Now,
 	}
 	if s.loc == nil {
@@ -96,6 +101,8 @@ func New(repo *db.Repo, opts Options) (*Server, error) {
 		r.Post("/setup", s.handleSetup)
 		r.Post("/login", s.handleLogin)
 		r.Post("/logout", s.handleLogout)
+		r.Get("/oidc/login", s.handleSSOLogin)
+		r.Get("/oidc/callback", s.handleSSOCallback)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireUser)
