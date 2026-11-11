@@ -48,6 +48,12 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
   - Die App bucht sie automatisch am Fälligkeitstag. Fehlt der Tag in einem Monat (31.), bucht sie am Monatsletzten.
   - Ihre echten Abbuchungen zählen nicht noch einmal gegen den freien Teil.
   - Eine von Hand gelöschte Buchung kommt nicht wieder.
+  - Jedes Abo und jeder Vertrag kann ein **Logo** haben (PNG, JPG, GIF, WebP bis 5 MB).
+    - Der Server rechnet es neu auf 128×128 px als PNG und legt es in der Datenbank ab, also gleich mit im Backup.
+    - SVG ist ausgeschlossen, weil es Skripte enthalten kann.
+  - **Zahlungsart:** SEPA-Lastschrift, Dauerauftrag, Überweisung, Kreditkarte, PayPal, Bar oder Sonstige, dazu eine kurze Notiz wie „Visa …1234“.
+    - Vollständige Karten- und Kontonummern (IBAN) lehnt die App ab.
+    - Die Liste zeigt die Monatssumme je Zahlungsart.
 - **Kategorien** mit Farbe und optionalem Budget teilen den freien Teil auf.
   - Ohne Gesamtbudget gilt die Summe der Kategoriebudgets.
 - **Buchungen** (Ausgabe/Einnahme) mit Datum, Kategorie und Notiz.
@@ -140,4 +146,5 @@ Alle Endpunkte außer `health`, `setup`, `login` und `logout` brauchen eine Sitz
 | PUT | `/api/budget/total` | Gesamtbudget pro Monat `{total_cents}`, 0 entfernt es |
 | GET/POST, PUT/DELETE | `/api/categories`, `/api/categories/{id}` | Kategorien |
 | POST, PUT/DELETE | `/api/transactions`, `/api/transactions/{id}` | Buchungen |
-| GET/POST, PUT/DELETE | `/api/recurring`, `/api/recurring/{id}` | Abos, Verträge, feste Einnahmen `{…, interval_months: 1\|3\|6\|12}` |
+| GET/POST, PUT/DELETE | `/api/recurring`, `/api/recurring/{id}` | Abos, Verträge, feste Einnahmen `{…, interval_months: 1\|3\|6\|12, payment_method, payment_note}` |
+| PUT/DELETE, GET | `/api/recurring/{id}/logo` | Logo hochladen (Body = Bild, `Content-Type: image/…`) / entfernen / abrufen (`?v=<logo_version>`) |

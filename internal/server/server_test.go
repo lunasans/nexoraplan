@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -389,6 +390,69 @@ func TestBudgetTotal(t *testing.T) {
 	c.do("GET", "/api/budget?month=2026-11", nil, 200, &b)
 	if b.Plan.TotalCents != 0 || b.Plan.FreeCents != 40000 {
 		t.Fatalf("ohne Gesamtbudget: %+v", b.Plan)
+	}
+}
+
+func TestContractLogoAndPayment(t *testing.T) {
+	_, c := testServer(t)
+	setup(c)
+	var x db.Recurring
+	c.do("POST", "/api/recurring", map[string]any{"title": "Streaming", "kind": "expense", "amount_cents": 1299, "day": 5,
+		"starts_on": "2026-11-05", "payment_method": "card", "payment_note": " Visa …1234 "}, 201, &x)
+	if x.PaymentMethod != "card" || x.PaymentNote != "Visa …1234" || x.LogoVersion != 0 {
+		t.Fatalf("angelegt: %+v", x)
+	}
+	c.do("POST", "/api/recurring", map[string]any{"title": "X", "kind": "expense", "amount_cents": 100, "day": 1,
+		"starts_on": "2026-11-01", "payment_method": "bitcoin"}, 400, nil)
+	c.do("PUT", fmt.Sprintf("/api/recurring/%d", x.ID), map[string]any{"title": "Streaming", "kind": "expense", "amount_cents": 1299, "day": 5,
+		"starts_on": "2026-11-05", "payment_method": "card", "payment_note": "4111 1111 1111 1111"}, 400, nil)
+
+	upload := func(ct string, body []byte, want int) {
+		t.Helper()
+		req, _ := http.NewRequest("PUT", fmt.Sprintf("%s/api/recurring/%d/logo", c.base, x.ID), bytes.NewReader(body))
+		req.Header.Set("Content-Type", ct)
+		res, err := c.http.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != want {
+			t.Fatalf("Upload %s: %d, erwartet %d", ct, res.StatusCode, want)
+		}
+	}
+	var img bytes.Buffer
+	png.Encode(&img, testImage(300, 300))
+	upload("text/plain", img.Bytes(), 415)
+	upload("image/png", []byte("kein Bild"), 400)
+	upload("image/png", img.Bytes(), 200)
+	upload("image/png", img.Bytes(), 200)
+
+	var list []db.Recurring
+	c.do("GET", "/api/recurring", nil, 200, &list)
+	if list[0].LogoVersion != 2 {
+		t.Fatalf("Logo-Version %d", list[0].LogoVersion)
+	}
+	res, err := c.http.Get(fmt.Sprintf("%s/api/recurring/%d/logo?v=2", c.base, x.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := png.Decode(res.Body)
+	res.Body.Close()
+	if res.Header.Get("Content-Type") != "image/png" || got == nil || got.Bounds().Dx() != 128 {
+		t.Fatalf("Logo: %s %v", res.Header.Get("Content-Type"), got)
+	}
+
+	// Ändern behält das Logo
+	c.do("PUT", fmt.Sprintf("/api/recurring/%d", x.ID), map[string]any{"title": "Streaming", "kind": "expense", "amount_cents": 1399, "day": 5,
+		"starts_on": "2026-11-05", "payment_method": "sepa"}, 200, &x)
+	if x.LogoVersion != 2 || x.PaymentMethod != "sepa" || x.PaymentNote != "" {
+		t.Fatalf("nach Ändern: %+v", x)
+	}
+	c.do("DELETE", fmt.Sprintf("/api/recurring/%d/logo", x.ID), nil, 204, nil)
+	c.do("GET", fmt.Sprintf("/api/recurring/%d/logo", x.ID), nil, 404, nil)
+	c.do("GET", "/api/recurring", nil, 200, &list)
+	if list[0].LogoVersion != 0 {
+		t.Fatal("Logo nicht entfernt")
 	}
 }
 

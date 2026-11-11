@@ -6,6 +6,7 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-sql-driver/mysql v1.10.1
 	golang.org/x/crypto v0.58.0
+	golang.org/x/image v0.47.0
 )
 
 require (

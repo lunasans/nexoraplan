@@ -117,3 +117,18 @@ export function intervalText(r) {
   for (let m = startMonth; list.length < 12 / months; m += months) list.push(short[(m - 1) % 12]);
   return `${label} am ${r.day}. (${list.join(', ')})`;
 }
+
+// Zahlungsarten von Abos und Verträgen
+export const PAYMENT_METHODS = [
+  { value: 'sepa', label: 'SEPA-Lastschrift', short: 'Lastschrift' },
+  { value: 'standing_order', label: 'Dauerauftrag', short: 'Dauerauftrag' },
+  { value: 'transfer', label: 'Überweisung', short: 'Überweisung' },
+  { value: 'card', label: 'Kreditkarte', short: 'Kreditkarte' },
+  { value: 'paypal', label: 'PayPal', short: 'PayPal' },
+  { value: 'cash', label: 'Bar', short: 'Bar' },
+  { value: 'other', label: 'Sonstige', short: 'Sonstige' },
+];
+
+export function paymentLabel(value) {
+  return PAYMENT_METHODS.find((p) => p.value === value)?.short ?? '';
+}

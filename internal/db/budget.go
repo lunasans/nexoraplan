@@ -36,6 +36,11 @@ type Recurring struct {
 	StartsOn       string  `json:"starts_on"`
 	EndsOn         *string `json:"ends_on"`
 	BookedUntil    *string `json:"booked_until"`
+	// PaymentMethod: sepa, standing_order, transfer, card, paypal, cash, other oder ""
+	PaymentMethod string `json:"payment_method"`
+	PaymentNote   string `json:"payment_note"` // z. B. „Visa …1234“
+	// LogoVersion: 0 = kein Logo; ändert sich mit jedem neuen Logo (Cache im Browser)
+	LogoVersion int `json:"logo_version"`
 }
 
 func nullID(n sql.NullInt64) *uint64 {
@@ -160,14 +165,17 @@ func (r *Repo) DeleteTransaction(ctx context.Context, id uint64) error {
 
 // --- Feste Buchungen --------------------------------------------------------
 
-const recColumns = `id, title, kind, amount_cents, category_id, day, interval_months, starts_on, ends_on, booked_until`
+// Ohne das Logo selbst – das lädt nur RecurringLogo.
+const recColumns = `id, title, kind, amount_cents, category_id, day, interval_months, starts_on, ends_on, booked_until,
+	payment_method, payment_note, IF(logo IS NULL, 0, logo_version)`
 
 func scanRecurring(row scanner) (Recurring, error) {
 	var x Recurring
 	var cat sql.NullInt64
 	var starts time.Time
 	var ends, booked sql.NullTime
-	if err := row.Scan(&x.ID, &x.Title, &x.Kind, &x.AmountCents, &cat, &x.Day, &x.IntervalMonths, &starts, &ends, &booked); err != nil {
+	if err := row.Scan(&x.ID, &x.Title, &x.Kind, &x.AmountCents, &cat, &x.Day, &x.IntervalMonths, &starts, &ends, &booked,
+		&x.PaymentMethod, &x.PaymentNote, &x.LogoVersion); err != nil {
 		return x, notFound(err)
 	}
 	x.CategoryID = nullID(cat)
@@ -199,8 +207,9 @@ func (r *Repo) RecurringByID(ctx context.Context, id uint64) (Recurring, error) 
 }
 
 func (r *Repo) CreateRecurring(ctx context.Context, x Recurring) (Recurring, error) {
-	res, err := r.db.ExecContext(ctx, `INSERT INTO recurring (title, kind, amount_cents, category_id, day, interval_months, starts_on, ends_on)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, x.Title, x.Kind, x.AmountCents, x.CategoryID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn)
+	res, err := r.db.ExecContext(ctx, `INSERT INTO recurring (title, kind, amount_cents, category_id, day, interval_months, starts_on, ends_on,
+		payment_method, payment_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		x.Title, x.Kind, x.AmountCents, x.CategoryID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn, x.PaymentMethod, x.PaymentNote)
 	if err != nil {
 		return x, err
 	}
@@ -211,8 +220,20 @@ func (r *Repo) CreateRecurring(ctx context.Context, x Recurring) (Recurring, err
 // UpdateRecurring ändert die Vorlage; bereits gebuchte Monate bleiben, wie sie sind.
 func (r *Repo) UpdateRecurring(ctx context.Context, x Recurring) error {
 	return affected(r.db.ExecContext(ctx, `UPDATE recurring SET title = ?, kind = ?, amount_cents = ?, category_id = ?, day = ?,
-		interval_months = ?, starts_on = ?, ends_on = ? WHERE id = ?`,
-		x.Title, x.Kind, x.AmountCents, x.CategoryID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn, x.ID))
+		interval_months = ?, starts_on = ?, ends_on = ?, payment_method = ?, payment_note = ? WHERE id = ?`,
+		x.Title, x.Kind, x.AmountCents, x.CategoryID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn, x.PaymentMethod, x.PaymentNote, x.ID))
+}
+
+// SetRecurringLogo speichert ein Logo (PNG); nil entfernt es.
+func (r *Repo) SetRecurringLogo(ctx context.Context, id uint64, png []byte) error {
+	return affected(r.db.ExecContext(ctx, `UPDATE recurring SET logo = ?, logo_version = logo_version + 1 WHERE id = ?`, png, id))
+}
+
+// RecurringLogo liefert das Logo; ErrNotFound, wenn es keins gibt.
+func (r *Repo) RecurringLogo(ctx context.Context, id uint64) ([]byte, error) {
+	var png []byte
+	err := r.db.QueryRowContext(ctx, `SELECT logo FROM recurring WHERE id = ? AND logo IS NOT NULL`, id).Scan(&png)
+	return png, notFound(err)
 }
 
 // MonthlyShare: Anteil pro Monat (240 € jährlich = 20 €), auf Cent gerundet.

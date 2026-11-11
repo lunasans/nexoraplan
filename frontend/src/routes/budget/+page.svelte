@@ -3,8 +3,9 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '#lib/api.js';
-  import { addMonths, intervalText, money, monthTitle, parseMoney, moneyInput, shortDate, weekdayShort } from '#lib/format.js';
+  import { addMonths, intervalText, money, monthTitle, parseMoney, paymentLabel, moneyInput, shortDate, weekdayShort } from '#lib/format.js';
   import { categories, handleError, loadCategories, openTransaction, showToast } from '#lib/stores.svelte.js';
+  import ContractLogo from '#lib/components/ContractLogo.svelte';
   import Icon from '#lib/components/Icon.svelte';
 
   let data = $state(null);
@@ -19,6 +20,7 @@
     return groups;
   });
   const plan = $derived(data?.plan);
+  const contractById = $derived(Object.fromEntries((data?.contracts ?? []).map((x) => [x.id, x])));
   const used = $derived(plan && plan.free_cents > 0 ? data.variable_cents / plan.free_cents : 0);
   let editTotal = $state(null); // Eingabe beim Ändern des Gesamtbudgets
   let totalError = $state('');
@@ -170,8 +172,9 @@
     <section class="card" aria-labelledby="contracts-title">
       <div class="card-head"><h2 id="contracts-title">Abos &amp; Verträge</h2><a class="small" href="/budget/kategorien">Verwalten</a></div>
       {#each data.contracts as x (x.id)}
-        <div class="list-row">
-          <div class="grow"><span>{x.title}</span><span class="small muted">{intervalText(x)}</span></div>
+        <div class="list-row contract-row">
+          <ContractLogo contract={x} size={32} />
+          <div class="grow"><span>{x.title}</span><span class="small muted">{intervalText(x)}{x.payment_method ? ` · ${paymentLabel(x.payment_method)}` : ''}</span></div>
           <div style="text-align: right; display: grid">
             <span class="mono">{money(x.amount_cents)}</span>
             {#if x.interval_months > 1}<span class="small muted mono">≈ {money(x.monthly_cents)} / Monat</span>{/if}
@@ -193,7 +196,7 @@
           {#each g.items as t (t.id)}
             {@const c = catById[t.category_id]}
             <button type="button" class="tx-row" class:income={t.kind === 'income'} onclick={() => openTransaction({ transaction: t }, reload)}>
-              <span class="note">{t.note || c?.name || (t.kind === 'income' ? 'Einnahme' : 'Ausgabe')}</span>
+              <span class="note" style="display: flex; align-items: center; gap: 8px">{#if contractById[t.recurring_id]?.logo_version}<ContractLogo contract={contractById[t.recurring_id]} size={22} />{/if}{t.note || c?.name || (t.kind === 'income' ? 'Einnahme' : 'Ausgabe')}</span>
               <span class="amount">{t.kind === 'income' ? '+' : '−'}{money(t.amount_cents)}</span>
               <span class="meta">
                 {#if c}<span class="dot" style="background: {c.color}"></span>{c.name}{/if}

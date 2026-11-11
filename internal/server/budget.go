@@ -17,6 +17,15 @@ const maxCents = 100_000_000_00 // 100 Mio. €
 
 var colorRe = regexp.MustCompile(`^#[0-9a-f]{6}$`)
 
+// paymentMethods: Zahlungsarten von Abos und Verträgen ("" = nicht angegeben).
+var paymentMethods = map[string]bool{
+	"": true, "sepa": true, "standing_order": true, "transfer": true, "card": true, "paypal": true, "cash": true, "other": true,
+}
+
+// cardNumberRe erkennt 12 und mehr Ziffern am Stück (auch mit Leerzeichen/Bindestrichen)
+// oder eine IBAN – beides soll nicht im Klartext in der Notiz landen.
+var cardNumberRe = regexp.MustCompile(`(?:\d[ -]?){12,}|\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){3,}`)
+
 // monthParam liest ?month=2026-11; ohne Angabe der aktuelle Monat.
 func (s *Server) monthParam(r *http.Request) (time.Time, bool) {
 	raw := r.URL.Query().Get("month")
@@ -411,12 +420,15 @@ func (s *Server) readRecurring(w http.ResponseWriter, r *http.Request) (db.Recur
 		Interval    int     `json:"interval_months"`
 		StartsOn    string  `json:"starts_on"`
 		EndsOn      *string `json:"ends_on"`
+		Payment     string  `json:"payment_method"`
+		PaymentNote string  `json:"payment_note"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return db.Recurring{}, false
 	}
 	x := db.Recurring{Title: strings.TrimSpace(req.Title), Kind: req.Kind, AmountCents: req.AmountCents,
-		CategoryID: req.CategoryID, Day: req.Day, IntervalMonths: req.Interval, StartsOn: req.StartsOn, EndsOn: req.EndsOn}
+		CategoryID: req.CategoryID, Day: req.Day, IntervalMonths: req.Interval, StartsOn: req.StartsOn, EndsOn: req.EndsOn,
+		PaymentMethod: req.Payment, PaymentNote: strings.TrimSpace(req.PaymentNote)}
 	if x.IntervalMonths == 0 {
 		x.IntervalMonths = 1
 	}
@@ -430,6 +442,13 @@ func (s *Server) readRecurring(w http.ResponseWriter, r *http.Request) (db.Recur
 		writeError(w, http.StatusBadRequest, "Abstand muss monatlich, vierteljährlich, halbjährlich oder jährlich sein")
 	case x.Day < 1 || x.Day > 31:
 		writeError(w, http.StatusBadRequest, "Tag muss zwischen 1 und 31 liegen")
+	case !paymentMethods[x.PaymentMethod]:
+		writeError(w, http.StatusBadRequest, "Zahlungsart unbekannt")
+	case utf8.RuneCountInString(x.PaymentNote) > 100:
+		writeError(w, http.StatusBadRequest, "Die Notiz zur Zahlung ist zu lang (höchstens 100 Zeichen)")
+	case cardNumberRe.MatchString(x.PaymentNote):
+		// Volle Karten- oder Kontonummern gehören nicht in einen Planer
+		writeError(w, http.StatusBadRequest, "Bitte keine vollständige Karten- oder Kontonummer speichern – die letzten 4 Ziffern reichen")
 	case !validDate(x.StartsOn):
 		writeError(w, http.StatusBadRequest, "Beginn ungültig")
 	case x.EndsOn != nil && (!validDate(*x.EndsOn) || *x.EndsOn < x.StartsOn):
@@ -469,6 +488,11 @@ func (s *Server) handleRecurringUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	x.ID = id
 	if err := s.repo.UpdateRecurring(r.Context(), x); err != nil {
+		dbError(w, r, err, "Feste Buchung")
+		return
+	}
+	x, err := s.repo.RecurringByID(r.Context(), id)
+	if err != nil {
 		dbError(w, r, err, "Feste Buchung")
 		return
 	}
