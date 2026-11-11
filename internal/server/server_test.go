@@ -398,10 +398,10 @@ func TestBudgetTotal(t *testing.T) {
 		t.Fatalf("Woche: geplant %d, gezählt %d", w.Budget.Planned, w.Budget.Budgeted)
 	}
 
-	// Gesamtbudget entfernen: wieder die Summe der Kategoriebudgets
+	// Gesamtbudget entfernen: kein Plan mehr
 	c.do("PUT", "/api/budget/total", map[string]any{"total_cents": 0}, 200, nil)
 	c.do("GET", "/api/budget?month=2026-11", nil, 200, &b)
-	if b.Plan.TotalCents != 0 || b.Plan.FreeCents != 40000 {
+	if b.Plan.TotalCents != 0 || b.Plan.FreeCents != 0 {
 		t.Fatalf("ohne Gesamtbudget: %+v", b.Plan)
 	}
 }

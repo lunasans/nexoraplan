@@ -159,15 +159,15 @@ func TestTelegramNotifications(t *testing.T) {
 		t.Fatalf("nächster Tag: %q", got)
 	}
 
-	// Warnung kommt nach fehlgeschlagenem Senden später doch noch (neuer Monat, neue Warnung)
-	c.do("POST", "/api/transactions", map[string]any{"kind": "expense", "amount_cents": 3000, "day": "2026-12-12", "category_id": food.ID}, 201, nil)
+	// Warnung kommt nach fehlgeschlagenem Senden später doch noch (neuer Monat, neue Warnung – innerhalb der 30 Tage Anmeldung)
+	c.do("POST", "/api/transactions", map[string]any{"kind": "expense", "amount_cents": 3000, "day": "2026-12-01", "category_id": food.ID}, 201, nil)
 	tg.failSend = true
-	s.now = func() time.Time { return time.Date(2026, 12, 13, 8, 0, 0, 0, berlin) }
+	s.now = func() time.Time { return time.Date(2026, 12, 2, 8, 0, 0, 0, berlin) }
 	if err := s.notifyTick(ctx); err == nil {
 		t.Fatal("Fehler beim Senden muss gemeldet werden")
 	}
 	tg.failSend = false
-	s.now = func() time.Time { return time.Date(2026, 12, 14, 8, 0, 0, 0, berlin) }
+	s.now = func() time.Time { return time.Date(2026, 12, 3, 8, 0, 0, 0, berlin) }
 	s.notifyTick(ctx)
 	last := tg.texts()[len(tg.texts())-1]
 	if !strings.Contains(last, "Budget Dezember überschritten") || strings.Contains(last, "November") {
