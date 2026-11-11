@@ -527,6 +527,38 @@ func TestPockets(t *testing.T) {
 	}
 }
 
+func TestPocketForecastAPI(t *testing.T) {
+	_, c := testServer(t) // heute: 11.11.2026
+	setup(c)
+	c.do("POST", "/api/pockets", map[string]any{"name": "X", "balance_cents": 100}, 400, nil)
+	c.do("POST", "/api/pockets", map[string]any{"name": "X", "balance_cents": 100, "balance_on": "2026-12-01"}, 400, nil)
+	c.do("POST", "/api/pockets", map[string]any{"name": "X", "deposit_day": 32}, 400, nil)
+	var p db.Pocket
+	c.do("POST", "/api/pockets", map[string]any{"name": "Jährlich", "monthly_cents": 5000, "balance_cents": 3000, "balance_on": "2026-11-11"}, 201, &p)
+	if p.DepositDay != 1 {
+		t.Fatalf("Tag des Dauerauftrags: %d", p.DepositDay)
+	}
+	c.do("POST", "/api/recurring", map[string]any{"title": "Haftpflicht", "kind": "expense", "amount_cents": 24000, "day": 15,
+		"interval_months": 12, "starts_on": "2027-01-15", "pocket_id": p.ID}, 201, nil)
+
+	var b struct {
+		Pockets []pocketSummary `json:"pockets"`
+	}
+	c.do("GET", "/api/budget", nil, 200, &b)
+	f := b.Pockets[0].Forecast
+	if f == nil || f.ShortOn == nil || *f.ShortOn != "2027-01-15" || f.ShortCents != 11000 || f.Events != nil {
+		t.Fatalf("Vorschau in der Übersicht: %+v", f)
+	}
+	var full pocketForecast
+	c.do("GET", fmt.Sprintf("/api/pockets/%d/forecast", p.ID), nil, 200, &full)
+	if len(full.Events) != 13 { // 12 Eingänge + Haftpflicht
+		t.Fatalf("Posten: %d", len(full.Events))
+	}
+	// Stand entfernen: keine Vorschau mehr
+	c.do("PUT", fmt.Sprintf("/api/pockets/%d", p.ID), map[string]any{"name": "Jährlich", "monthly_cents": 5000}, 200, nil)
+	c.do("GET", fmt.Sprintf("/api/pockets/%d/forecast", p.ID), nil, 409, nil)
+}
+
 func TestCalDAVNeedsKey(t *testing.T) {
 	s, c := testServer(t)
 	setup(c)

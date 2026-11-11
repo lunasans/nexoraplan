@@ -44,7 +44,11 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
   - Abos und Verträge werden von einem Pocket abgebucht, Kategorien gehören zu einem Pocket.
   - Je Pocket rechnet die App: drauf − Abos & Verträge (anteilig) = frei − Ausgaben = übrig.
   - Reicht der Betrag nicht für die Verträge, warnt sie und nennt den fehlenden Betrag, z. B. „Dauerauftrag auf 920 € erhöhen“.
-  - Kontostände ruft die App nicht ab, sie plant nur.
+  - **Vorschau mit Stand (optional):** Stand und Datum eintragen, dazu den Tag des Dauerauftrags.
+    - Die App rechnet 12 Monate voraus: +monatlicher Betrag, − jede Abbuchung der zugeordneten Verträge am Fälligkeitstag, − Ausgaben der Kategorien des Pockets seit dem Stand.
+    - Sie warnt beim ersten Engpass, auch wenn der Monatsdurchschnitt reicht, z. B. „Am 15.01.2027 fehlen 185 € (Haftpflicht)“, und zeigt sonst den niedrigsten Stand.
+    - Die Liste aller Posten lässt sich aufklappen.
+  - Kontostände ruft die App nicht ab. Den Stand trägst du von Hand ein.
 - **Gesamtbudget pro Monat** (ohne Pockets von Hand), z. B. 2.000 €.
   - Davon gehen Abos & Verträge **anteilig** ab: Ein Jahresvertrag über 240 € zählt jeden Monat mit 20 €.
   - Der Rest ist frei für Einkäufe, Freizeit usw.
@@ -149,7 +153,8 @@ Alle Endpunkte außer `health`, `setup`, `login` und `logout` brauchen eine Sitz
 | GET/PUT/DELETE | `/api/caldav` | Kalenderserver anzeigen / verbinden (prüft zuerst) / trennen |
 | GET | `/api/budget?month=2026-11` | Monatsübersicht mit Plan (Gesamtbudget, Abos & Verträge anteilig, frei, übrig) |
 | PUT | `/api/budget/total` | Gesamtbudget pro Monat `{total_cents}`, 0 entfernt es (nur ohne Pockets) |
-| GET/POST, PUT/DELETE | `/api/pockets`, `/api/pockets/{id}` | Pockets `{name, color, monthly_cents}`; Kategorien und Abos haben `pocket_id` |
+| GET/POST, PUT/DELETE | `/api/pockets`, `/api/pockets/{id}` | Pockets `{name, color, monthly_cents, deposit_day, balance_cents, balance_on}`; Kategorien und Abos haben `pocket_id` |
+| GET | `/api/pockets/{id}/forecast` | Vorschau 12 Monate mit allen Posten und erstem Engpass |
 | GET/POST, PUT/DELETE | `/api/categories`, `/api/categories/{id}` | Kategorien |
 | POST, PUT/DELETE | `/api/transactions`, `/api/transactions/{id}` | Buchungen |
 | GET/POST, PUT/DELETE | `/api/recurring`, `/api/recurring/{id}` | Abos, Verträge, feste Einnahmen `{…, interval_months: 1\|3\|6\|12, payment_method, payment_note}` |

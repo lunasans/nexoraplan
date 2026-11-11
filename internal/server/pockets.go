@@ -21,7 +21,7 @@ func (s *Server) handlePockets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, list)
 }
 
-func readPocket(w http.ResponseWriter, r *http.Request) (db.Pocket, bool) {
+func (s *Server) readPocket(w http.ResponseWriter, r *http.Request) (db.Pocket, bool) {
 	var p db.Pocket
 	if !decodeJSON(w, r, &p) {
 		return p, false
@@ -31,6 +31,12 @@ func readPocket(w http.ResponseWriter, r *http.Request) (db.Pocket, bool) {
 	if p.Color == "" {
 		p.Color = "#76736e"
 	}
+	if p.DepositDay == 0 {
+		p.DepositDay = 1
+	}
+	if p.BalanceOn != nil && *p.BalanceOn == "" {
+		p.BalanceOn = nil
+	}
 	switch {
 	case p.Name == "" || utf8.RuneCountInString(p.Name) > 100:
 		writeError(w, http.StatusBadRequest, "Bitte einen Namen mit höchstens 100 Zeichen angeben")
@@ -38,6 +44,14 @@ func readPocket(w http.ResponseWriter, r *http.Request) (db.Pocket, bool) {
 		writeError(w, http.StatusBadRequest, "Farbe ungültig")
 	case p.MonthlyCents < 0 || p.MonthlyCents > maxCents:
 		writeError(w, http.StatusBadRequest, "Monatlicher Betrag ungültig")
+	case p.DepositDay < 1 || p.DepositDay > 31:
+		writeError(w, http.StatusBadRequest, "Tag des Dauerauftrags muss zwischen 1 und 31 liegen")
+	case (p.BalanceCents == nil) != (p.BalanceOn == nil):
+		writeError(w, http.StatusBadRequest, "Zum Stand gehört ein Datum")
+	case p.BalanceCents != nil && (*p.BalanceCents > maxCents || *p.BalanceCents < -maxCents):
+		writeError(w, http.StatusBadRequest, "Stand ungültig")
+	case p.BalanceOn != nil && (!validDate(*p.BalanceOn) || *p.BalanceOn > s.today().Format(db.DateLayout)):
+		writeError(w, http.StatusBadRequest, "Das Datum des Stands darf nicht in der Zukunft liegen")
 	default:
 		return p, true
 	}
@@ -45,7 +59,7 @@ func readPocket(w http.ResponseWriter, r *http.Request) (db.Pocket, bool) {
 }
 
 func (s *Server) handlePocketCreate(w http.ResponseWriter, r *http.Request) {
-	p, ok := readPocket(w, r)
+	p, ok := s.readPocket(w, r)
 	if !ok {
 		return
 	}
@@ -66,7 +80,7 @@ func (s *Server) handlePocketUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, ok := readPocket(w, r)
+	p, ok := s.readPocket(w, r)
 	if !ok {
 		return
 	}

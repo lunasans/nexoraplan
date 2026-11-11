@@ -128,6 +128,7 @@ func New(repo *db.Repo, opts Options) (*Server, error) {
 			r.Post("/pockets", s.handlePocketCreate)
 			r.Put("/pockets/{id}", s.handlePocketUpdate)
 			r.Delete("/pockets/{id}", s.handlePocketDelete)
+			r.Get("/pockets/{id}/forecast", s.handlePocketForecast)
 			r.Get("/categories", s.handleCategories)
 			r.Post("/categories", s.handleCategoryCreate)
 			r.Put("/categories/{id}", s.handleCategoryUpdate)

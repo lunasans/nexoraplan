@@ -20,6 +20,10 @@ type Pocket struct {
 	Name         string `json:"name"`
 	Color        string `json:"color"`
 	MonthlyCents int64  `json:"monthly_cents"`
+	// Stand für die Vorschau: BalanceCents am Tag BalanceOn (beide nil = keiner eingetragen)
+	BalanceCents *int64  `json:"balance_cents"`
+	BalanceOn    *string `json:"balance_on"`
+	DepositDay   int     `json:"deposit_day"` // Tag, an dem der monatliche Betrag kommt (1–31)
 }
 
 type Transaction struct {
@@ -113,7 +117,8 @@ func (r *Repo) DeleteCategory(ctx context.Context, id uint64) error {
 // --- Pockets ----------------------------------------------------------------
 
 func (r *Repo) Pockets(ctx context.Context) ([]Pocket, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, name, color, monthly_cents FROM pockets ORDER BY position, name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, color, monthly_cents, balance_cents, balance_on, deposit_day
+		FROM pockets ORDER BY position, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -121,17 +126,24 @@ func (r *Repo) Pockets(ctx context.Context) ([]Pocket, error) {
 	out := []Pocket{}
 	for rows.Next() {
 		var p Pocket
-		if err := rows.Scan(&p.ID, &p.Name, &p.Color, &p.MonthlyCents); err != nil {
+		var balance sql.NullInt64
+		var on sql.NullTime
+		if err := rows.Scan(&p.ID, &p.Name, &p.Color, &p.MonthlyCents, &balance, &on, &p.DepositDay); err != nil {
 			return nil, err
 		}
+		if balance.Valid {
+			p.BalanceCents = &balance.Int64
+		}
+		p.BalanceOn = nullDate(on)
 		out = append(out, p)
 	}
 	return out, rows.Err()
 }
 
 func (r *Repo) CreatePocket(ctx context.Context, p Pocket) (Pocket, error) {
-	res, err := r.db.ExecContext(ctx, `INSERT INTO pockets (name, color, monthly_cents, position)
-		SELECT ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM pockets`, p.Name, p.Color, p.MonthlyCents)
+	res, err := r.db.ExecContext(ctx, `INSERT INTO pockets (name, color, monthly_cents, balance_cents, balance_on, deposit_day, position)
+		SELECT ?, ?, ?, ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM pockets`,
+		p.Name, p.Color, p.MonthlyCents, p.BalanceCents, p.BalanceOn, p.DepositDay)
 	if isDuplicate(err) {
 		return p, ErrExists
 	}
@@ -144,8 +156,8 @@ func (r *Repo) CreatePocket(ctx context.Context, p Pocket) (Pocket, error) {
 }
 
 func (r *Repo) UpdatePocket(ctx context.Context, p Pocket) error {
-	res, err := r.db.ExecContext(ctx, `UPDATE pockets SET name = ?, color = ?, monthly_cents = ? WHERE id = ?`,
-		p.Name, p.Color, p.MonthlyCents, p.ID)
+	res, err := r.db.ExecContext(ctx, `UPDATE pockets SET name = ?, color = ?, monthly_cents = ?, balance_cents = ?, balance_on = ?,
+		deposit_day = ? WHERE id = ?`, p.Name, p.Color, p.MonthlyCents, p.BalanceCents, p.BalanceOn, p.DepositDay, p.ID)
 	if isDuplicate(err) {
 		return ErrExists
 	}

@@ -132,3 +132,12 @@ export const PAYMENT_METHODS = [
 export function paymentLabel(value) {
   return PAYMENT_METHODS.find((p) => p.value === value)?.short ?? '';
 }
+
+// parseSignedMoney: wie parseMoney, erlaubt aber 0 und negative Beträge („-12,50“) → Cent; ungültig → null.
+export function parseSignedMoney(input) {
+  const s = String(input ?? '').trim();
+  if (/^[-−]?\s*0+([.,]0{1,2})?\s*€?$/.test(s)) return 0;
+  const negative = /^[-−]/.test(s);
+  const cents = parseMoney(s.replace(/^[-−]\s*/, ''));
+  return cents === null ? null : negative ? -cents : cents;
+}

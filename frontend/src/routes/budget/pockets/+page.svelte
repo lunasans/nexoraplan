@@ -7,9 +7,10 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '#lib/api.js';
-  import { addMonths, money, moneyInput, monthTitle, parseMoney } from '#lib/format.js';
+  import { addMonths, dayString, money, moneyInput, monthTitle, parseMoney, parseSignedMoney, shortDate } from '#lib/format.js';
   import { handleError, loadPockets, showToast } from '#lib/stores.svelte.js';
   import BudgetTabs from '#lib/components/BudgetTabs.svelte';
+  import DateInput from '#lib/components/DateInput.svelte';
   import Icon from '#lib/components/Icon.svelte';
   import Modal from '#lib/components/Modal.svelte';
 
@@ -19,6 +20,7 @@
   let edit = $state(null);
   let error = $state('');
   let busy = $state(false);
+  let details = $state({}); // Pocket-ID → Vorschau mit allen Posten (aufgeklappt)
   const month = $derived(page.url.searchParams.get('m') || '');
   const real = $derived((data?.pockets ?? []).filter((p) => p.id));
   const none = $derived((data?.pockets ?? []).find((p) => !p.id));
@@ -42,9 +44,12 @@
 
   function open(p) {
     error = '';
+    const today = dayString(new Date());
     edit = p
-      ? { id: p.id, name: p.name, color: p.color, monthly: moneyInput(p.monthly_cents) }
-      : { id: 0, name: '', color: COLORS[real.length % COLORS.length], monthly: '' };
+      ? { id: p.id, name: p.name, color: p.color, monthly: moneyInput(p.monthly_cents), depositDay: p.deposit_day || 1,
+          balance: p.balance_cents === null ? '' : (p.balance_cents < 0 ? '-' : '') + (moneyInput(Math.abs(p.balance_cents)) || '0,00'),
+          balanceOn: p.balance_on || today }
+      : { id: 0, name: '', color: COLORS[real.length % COLORS.length], monthly: '', depositDay: 1, balance: '', balanceOn: today };
   }
 
   async function save(event) {
@@ -54,12 +59,24 @@
       error = 'Bitte einen Betrag wie 400,00 eingeben';
       return;
     }
+    let balance = null;
+    if (edit.balance.trim() !== '') {
+      balance = parseSignedMoney(edit.balance);
+      if (balance === null) {
+        error = 'Stand bitte wie 120,00 eingeben (auch 0 oder -20,00)';
+        return;
+      }
+    }
     busy = true;
-    const body = { name: edit.name, color: edit.color, monthly_cents: cents };
+    const body = {
+      name: edit.name, color: edit.color, monthly_cents: cents, deposit_day: Number(edit.depositDay) || 1,
+      balance_cents: balance, balance_on: balance === null ? null : edit.balanceOn,
+    };
     try {
       if (edit.id) await api('PUT', `/api/pockets/${edit.id}`, body);
       else await api('POST', '/api/pockets', body);
       showToast(edit.id ? 'Pocket gespeichert' : 'Pocket angelegt');
+      if (edit.id) delete details[edit.id];
       edit = null;
       await Promise.all([load(), loadPockets()]);
     } catch (err) {
@@ -76,6 +93,18 @@
       edit = null;
       showToast('Pocket gelöscht');
       await Promise.all([load(), loadPockets()]);
+    } catch (err) {
+      handleError(err);
+    }
+  }
+
+  async function toggleDetails(p) {
+    if (details[p.id]) {
+      delete details[p.id];
+      return;
+    }
+    try {
+      details[p.id] = await api('GET', `/api/pockets/${p.id}/forecast`);
     } catch (err) {
       handleError(err);
     }
@@ -145,6 +174,34 @@
             <p class="small muted">Mindestens {money(p.contracts_cents)} im Monat nötig, damit auch Jahres- und Quartalsverträge gedeckt sind.</p>
           {/if}
         </div>
+        {#if p.forecast}
+          {@const f = p.forecast}
+          <div class="forecast" class:short={f.short_on}>
+            <div class="plan-row"><span>Stand {shortDate(f.start_on)}</span><span class="mono">{money(f.start_cents)}</span></div>
+            {#if f.start_on !== data.today}<div class="plan-row"><span>Heute voraussichtlich</span><span class="mono">{money(f.today_cents)}</span></div>{/if}
+            {#if f.short_on}
+              <p class="small error" id="forecast-short-{p.id}"><strong>Am {shortDate(f.short_on, true)} fehlen {money(f.short_cents)}</strong> ({f.short_title}).
+                {#if p.short_cents === 0}Im Schnitt reicht der Betrag – es ist nur noch nicht genug angespart.{/if}</p>
+            {:else}
+              <p class="small ok-text">Reicht bis {shortDate(f.until, true)} – niedrigster Stand {money(f.lowest_cents)} am {shortDate(f.lowest_on, true)}.</p>
+            {/if}
+            <button type="button" class="link small" style="justify-self: start" onclick={() => toggleDetails(p)}>{details[p.id] ? 'Vorschau ausblenden' : 'Vorschau: 12 Monate'}</button>
+            {#if details[p.id]}
+              <div class="forecast-list">
+                {#each details[p.id].events as e (e.day + e.title + e.amount_cents)}
+                  <div class="forecast-row" class:neg={e.balance_cents < 0}>
+                    <span class="mono small">{shortDate(e.day, true)}</span>
+                    <span class="small">{e.title}</span>
+                    <span class="mono small" class:ok-text={e.amount_cents > 0}>{e.amount_cents > 0 ? '+' : '−'}{money(Math.abs(e.amount_cents))}</span>
+                    <span class="mono small balance">{money(e.balance_cents)}</span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {:else if p.contracts}
+          <p class="small muted" style="padding: 0 14px 12px">Trag den aktuellen Stand ein (Bearbeiten), dann prüft die App jeden Fälligkeitstag.</p>
+        {/if}
       </section>
     {:else}
       <section class="card">
@@ -179,8 +236,17 @@
       <div class="dialog-body">
         <!-- svelte-ignore a11y_autofocus -->
         <label>Name<input name="name" required maxlength="100" placeholder="z. B. Versicherungen, Haushalt" autofocus bind:value={edit.name} /></label>
-        <label>Monatlich drauf in €<input name="monthly" inputmode="decimal" placeholder="z. B. 400,00" bind:value={edit.monthly} />
-          <span class="hint">Was jeden Monat auf das Pocket geht, z. B. per Dauerauftrag.</span></label>
+        <div class="field-row">
+          <label>Monatlich drauf in €<input name="monthly" inputmode="decimal" placeholder="z. B. 50,00" bind:value={edit.monthly} /></label>
+          <label>Kommt am Tag<input name="deposit_day" type="number" min="1" max="31" bind:value={edit.depositDay} /></label>
+        </div>
+        <span class="hint">Was jeden Monat auf das Pocket geht, z. B. per Dauerauftrag, und an welchem Tag.</span>
+        <div class="field-row">
+          <label>Aktueller Stand in € (optional)<input name="balance" inputmode="decimal" placeholder="z. B. 120,00" bind:value={edit.balance} /></label>
+          <label>Stand vom<DateInput name="balance_on" label="Stand vom" bind:value={edit.balanceOn} /></label>
+        </div>
+        <span class="hint">Mit Stand rechnet die App 12 Monate voraus und warnt, wenn an einem Fälligkeitstag zu wenig im Pocket ist.
+          Leer lassen = keine Vorschau.</span>
         <div class="form" style="gap: 4px">
           <span class="small" style="font-weight: 550">Farbe</span>
           <div class="weekdays" role="radiogroup" aria-label="Farbe">

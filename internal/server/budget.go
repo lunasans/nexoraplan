@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -95,6 +96,8 @@ type pocketSummary struct {
 	RemainingCents int64 `json:"remaining_cents"` // frei − Ausgaben
 	ShortCents     int64 `json:"short_cents"`     // so viel fehlt monatlich für die Verträge
 	AllocatedCents int64 `json:"allocated_cents"` // Kategoriebudgets im Pocket
+	// Forecast: Vorschau (ohne Einzelposten), nur mit eingetragenem Stand
+	Forecast *pocketForecast `json:"forecast"`
 }
 
 // pocketSummaries teilt Verträge und Ausgaben auf die Pockets auf. Der letzte
@@ -271,6 +274,23 @@ func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
 			summary[i].SpentCents += t.AmountCents
 		}
 	}
+	ps := pocketSummaries(pockets, contracts, summary)
+	if slices.ContainsFunc(pockets, func(p db.Pocket) bool { return p.BalanceCents != nil }) {
+		frecs, fcats, ftxs, err := s.forecastInputs(r)
+		if err != nil {
+			internalError(w, r, err)
+			return
+		}
+		for i := range ps {
+			if ps[i].ID == 0 {
+				continue
+			}
+			if f := forecastPocket(ps[i].Pocket, frecs, pocketCategories(ps[i].Pocket, fcats), ftxs, s.today()); f != nil {
+				f.Events = nil // die Liste lädt die Seite bei Bedarf
+				ps[i].Forecast = f
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"month":               month.Format("2006-01"),
 		"today":               s.today().Format(db.DateLayout),
@@ -283,7 +303,7 @@ func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
 		"variable_cents":      variable, // Ausgaben, die gegen den freien Teil zählen
 		"remaining_cents":     plan.FreeCents - variable,
 		"contracts":           contracts, // Abos & Verträge dieses Monats mit Monatsanteil
-		"pockets":             pocketSummaries(pockets, contracts, summary),
+		"pockets":             ps,
 		"categories":          summary,
 		"transactions":        txs,
 	})
