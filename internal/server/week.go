@@ -36,6 +36,17 @@ type weekDay struct {
 	Transactions []db.Transaction `json:"transactions"`
 	SpentCents   int64            `json:"spent_cents"`
 	IncomeCents  int64            `json:"income_cents"`
+	// Planned: Abos/Verträge, die erst nach heute fällig und noch nicht gebucht sind
+	Planned []plannedTx `json:"planned"`
+}
+
+// plannedTx: kommende Fälligkeit einer festen Buchung (zählt nicht in die Summen).
+type plannedTx struct {
+	RecurringID uint64  `json:"recurring_id"`
+	Title       string  `json:"title"`
+	Kind        string  `json:"kind"`
+	AmountCents int64   `json:"amount_cents"`
+	CategoryID  *uint64 `json:"category_id"`
 }
 
 // GET /api/week?date=2026-11-11 – alles für die Wochenansicht auf einmal.
@@ -91,7 +102,7 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		d := mon.AddDate(0, 0, i)
 		key := d.Format(db.DateLayout)
 		index[key] = i
-		days[i] = weekDay{Date: key, Events: []EventOut{}, Tasks: []db.Task{}, Transactions: []db.Transaction{}}
+		days[i] = weekDay{Date: key, Events: []EventOut{}, Tasks: []db.Task{}, Transactions: []db.Transaction{}, Planned: []plannedTx{}}
 		// Frei planbares Budget anteilig je Tag (Gesamtbudget minus Abos/Verträge)
 		// – eine Woche über den Monatswechsel rechnet beide Monate richtig.
 		daysInMonth := time.Date(d.Year(), d.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
@@ -138,6 +149,20 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 			}
 		default:
 			days[i].IncomeCents += t.AmountCents
+		}
+	}
+	// Kommende Fälligkeiten: gebucht wird erst am Tag selbst, bis dahin nur anzeigen
+	monDay := time.Date(mon.Year(), mon.Month(), mon.Day(), 0, 0, 0, 0, time.UTC)
+	after := monDay.AddDate(0, 0, -1)
+	if today := s.today(); today.After(after) {
+		after = today
+	}
+	for _, x := range recs {
+		for _, day := range db.DueDays(x, after, monDay.AddDate(0, 0, 6)) {
+			if i, ok := index[day.Format(db.DateLayout)]; ok {
+				days[i].Planned = append(days[i].Planned, plannedTx{RecurringID: x.ID, Title: x.Title, Kind: x.Kind,
+					AmountCents: x.AmountCents, CategoryID: x.CategoryID})
+			}
 		}
 	}
 	year, kw := mon.ISOWeek()

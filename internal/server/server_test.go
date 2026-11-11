@@ -292,6 +292,19 @@ func TestBudget(t *testing.T) {
 		t.Fatalf("Oktober (Miete am 31.10.): %+v", b)
 	}
 
+	// Woche: Miete am 30.11. ist noch nicht gebucht, aber als geplant zu sehen
+	var pw weekResp
+	c.do("GET", "/api/week?date=2026-11-30", nil, 200, &pw)
+	if len(pw.Days[0].Planned) != 1 || pw.Days[0].Planned[0].Title != "Miete" || pw.Days[0].SpentCents != 0 || len(pw.Days[0].Transactions) != 0 {
+		t.Fatalf("geplante Miete: %+v", pw.Days[0])
+	}
+	c.do("GET", "/api/week?date=2026-10-26", nil, 200, &pw) // Miete 31.10. und Gehalt 1.11. schon gebucht – nicht geplant
+	for _, d := range pw.Days {
+		if len(d.Planned) != 0 {
+			t.Fatalf("Vergangenes als geplant: %+v", d)
+		}
+	}
+
 	// Kategorie nachträglich zuordnen: schon gebuchte Miete zieht mit
 	var wohnen db.Category
 	c.do("POST", "/api/categories", map[string]any{"name": "Wohnen"}, 201, &wohnen)

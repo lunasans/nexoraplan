@@ -178,6 +178,13 @@
               <span class="amount">{t.kind === 'expense' ? '−' : '+'}{money(t.amount_cents)}</span>
             </button>
           {/each}
+          {#each day.planned ?? [] as p (p.recurring_id)}
+            <a class="tx planned" class:income={p.kind === 'income'} href="/budget/kategorien" title="Wird am Fälligkeitstag gebucht">
+              {#if p.category_id && catById[p.category_id]}<span class="dot" style="background: {catById[p.category_id].color}"></span>{/if}
+              <span class="note">{p.title} <span class="small muted">geplant</span></span>
+              <span class="amount">{p.kind === 'expense' ? '−' : '+'}{money(p.amount_cents)}</span>
+            </a>
+          {/each}
           {#if day.spent_cents}
             <div class="day-sum"><span>Summe</span><span class="mono">{money(day.spent_cents)}</span></div>
           {/if}
