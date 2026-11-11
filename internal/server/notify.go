@@ -349,12 +349,6 @@ func (s *Server) alerts(ctx context.Context, today time.Time) ([]alert, error) {
 		out = append(out, alert{"over:" + v.Month, fmt.Sprintf("Budget %s überschritten: %s mehr ausgegeben als frei war (%s).",
 			monthName(today), euro(-v.RemainingCents), euro(v.Plan.FreeCents))})
 	}
-	for _, c := range v.Categories {
-		if c.BudgetCents > 0 && c.SpentCents > c.BudgetCents {
-			out = append(out, alert{fmt.Sprintf("cat:%d:%s", c.ID, v.Month), fmt.Sprintf("Kategorie %s: %s von %s ausgegeben (%s drüber).",
-				c.Name, euro(c.SpentCents), euro(c.BudgetCents), euro(c.SpentCents-c.BudgetCents))})
-		}
-	}
 	return out, nil
 }
 

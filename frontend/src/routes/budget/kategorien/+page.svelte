@@ -1,4 +1,4 @@
-<!-- Kategorien mit Monatsbudget, Abos & Verträge (monatlich bis jährlich) und feste Einnahmen -->
+<!-- Kategorien, Abos & Verträge (monatlich bis jährlich) und feste Einnahmen -->
 <script>
   import { api } from '#lib/api.js';
   import { INTERVALS, PAYMENT_METHODS, dayString, intervalText, money, moneyInput, parseMoney, paymentLabel, shortDate } from '#lib/format.js';
@@ -19,7 +19,6 @@
 
   const pocketById = $derived(Object.fromEntries(pockets.list.map((p) => [p.id, p])));
   const catById = $derived(Object.fromEntries(categories.list.map((c) => [c.id, c])));
-  const totalBudget = $derived(categories.list.reduce((s, c) => s + c.budget_cents, 0));
   // Anteil pro Monat: 240 € jährlich = 20 €
   const perMonth = (r) => Math.round(r.amount_cents / (r.interval_months || 1));
   const monthlyIncome = $derived(recurring.filter((r) => r.kind === 'income' && !ended(r)).reduce((s, r) => s + perMonth(r), 0));
@@ -56,19 +55,14 @@
   function editCat(c) {
     error = '';
     cat = c
-      ? { id: c.id, name: c.name, color: c.color, budget: moneyInput(c.budget_cents), pocket: c.pocket_id ?? '' }
-      : { id: 0, name: '', color: COLORS[categories.list.length % COLORS.length], budget: '', pocket: '' };
+      ? { id: c.id, name: c.name, color: c.color, pocket: c.pocket_id ?? '' }
+      : { id: 0, name: '', color: COLORS[categories.list.length % COLORS.length], pocket: '' };
   }
 
   async function saveCat(event) {
     event.preventDefault();
-    const cents = cat.budget.trim() === '' ? 0 : parseMoney(cat.budget);
-    if (cents === null) {
-      error = 'Budget bitte wie 250,00 eingeben (leer = kein Budget)';
-      return;
-    }
     busy = true;
-    const body = { name: cat.name, color: cat.color, budget_cents: cents, pocket_id: cat.pocket === '' ? null : Number(cat.pocket) };
+    const body = { name: cat.name, color: cat.color, pocket_id: cat.pocket === '' ? null : Number(cat.pocket) };
     try {
       if (cat.id) await api('PUT', `/api/categories/${cat.id}`, body);
       else await api('POST', '/api/categories', body);
@@ -204,13 +198,12 @@
     {#each categories.list as c (c.id)}
       <div class="list-row">
         <span class="dot" style="background: {c.color}; width: 12px; height: 12px"></span>
-        <div class="grow"><span>{c.name}</span><span class="small muted">{c.budget_cents ? `${money(c.budget_cents)} im Monat` : 'ohne Budget'}{c.pocket_id && pocketById[c.pocket_id] ? ` · Pocket ${pocketById[c.pocket_id].name}` : ''}</span></div>
+        <div class="grow"><span>{c.name}</span>{#if c.pocket_id && pocketById[c.pocket_id]}<span class="small muted">Pocket {pocketById[c.pocket_id].name}</span>{/if}</div>
         <div class="buttons"><button type="button" class="icon-button" aria-label="{c.name} bearbeiten" onclick={() => editCat(c)}><Icon name="pencil" /></button></div>
       </div>
     {:else}
-      <p class="card-body empty">Lege Kategorien wie „Lebensmittel“ oder „Freizeit“ an und gib ihnen ein Monatsbudget.</p>
+      <p class="card-body empty">Lege Kategorien wie „Lebensmittel“ oder „Freizeit“ an, um deine Buchungen zuzuordnen.</p>
     {/each}
-    {#if totalBudget}<div class="list-row"><div class="grow"><span>Summe Monatsbudget</span></div><span class="mono">{money(totalBudget)}</span></div>{/if}
   </section>
 
   <section class="card" aria-labelledby="rec-title">
@@ -255,7 +248,6 @@
       <div class="dialog-body">
         <!-- svelte-ignore a11y_autofocus -->
         <label>Name<input name="name" required maxlength="100" autofocus bind:value={cat.name} /></label>
-        <label>Monatsbudget in €<input name="budget" inputmode="decimal" placeholder="leer = kein Budget" bind:value={cat.budget} /></label>
         {#if pockets.list.length}
           <label>Bezahlt aus Pocket
             <select name="pocket" bind:value={cat.pocket}>

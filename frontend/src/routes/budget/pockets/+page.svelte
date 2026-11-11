@@ -165,7 +165,7 @@
             <div class="plan-row minus"><span>Abos &amp; Verträge <span class="muted small">({p.contracts}, anteilig)</span></span><span class="mono">−{money(p.contracts_cents)}</span></div>
             <div class="plan-row sum"><span>Frei</span><span class="mono" class:neg={p.free_cents < 0}>{money(p.free_cents)}</span></div>
           {/if}
-          {#if p.spent_cents || p.allocated_cents}
+          {#if p.spent_cents}
             <div class="plan-row minus"><span>Ausgaben <span class="muted small">(Kategorien des Pockets)</span></span><span class="mono">−{money(p.spent_cents)}</span></div>
             <div class="plan-row total"><span>Übrig</span><span class="mono" class:neg={p.remaining_cents < 0}>{money(p.remaining_cents)}</span></div>
           {/if}

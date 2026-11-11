@@ -82,10 +82,6 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	budgeted := map[uint64]bool{}
-	for _, c := range cats {
-		budgeted[c.ID] = c.BudgetCents > 0
-	}
 	freeByMonth := map[time.Month]int64{}
 
 	days := make([]weekDay, 7)
@@ -96,11 +92,11 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		key := d.Format(db.DateLayout)
 		index[key] = i
 		days[i] = weekDay{Date: key, Events: []EventOut{}, Tasks: []db.Task{}, Transactions: []db.Transaction{}}
-		// Frei planbares Budget anteilig je Tag (Gesamtbudget minus Abos/Verträge bzw. Summe der
-		// Kategoriebudgets) – eine Woche über den Monatswechsel rechnet beide Monate richtig.
+		// Frei planbares Budget anteilig je Tag (Gesamtbudget minus Abos/Verträge)
+		// – eine Woche über den Monatswechsel rechnet beide Monate richtig.
 		daysInMonth := time.Date(d.Year(), d.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
 		if _, ok := freeByMonth[d.Month()]; !ok {
-			p, _ := planFor(total, recs, cats, time.Date(d.Year(), d.Month(), 1, 0, 0, 0, 0, time.UTC))
+			p, _ := planFor(total, recs, time.Date(d.Year(), d.Month(), 1, 0, 0, 0, 0, time.UTC))
 			freeByMonth[d.Month()] = p.FreeCents
 		}
 		planned += freeByMonth[d.Month()] / int64(daysInMonth)
@@ -137,7 +133,7 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		case "expense":
 			days[i].SpentCents += t.AmountCents
 			spent += t.AmountCents
-			if countsAgainstBudget(t, total, budgeted) {
+			if total > 0 && countsAgainstBudget(t) {
 				spentBudgeted += t.AmountCents
 			}
 		default:

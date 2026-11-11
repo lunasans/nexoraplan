@@ -40,20 +40,19 @@ func (s *Server) monthParam(r *http.Request) (time.Time, bool) {
 
 type categorySummary struct {
 	db.Category
-	SpentCents  int64 `json:"spent_cents"`  // Ausgaben ohne Abos/Verträge – zählen gegen das Kategoriebudget
+	SpentCents  int64 `json:"spent_cents"`  // Ausgaben ohne Abos/Verträge
 	FixedCents  int64 `json:"fixed_cents"`  // davon aus Abos/Verträgen gebucht
 	IncomeCents int64 `json:"income_cents"` // Einnahmen
 }
 
 // budgetPlan: Was im Monat für Einkäufe, Freizeit usw. frei ist.
 //
-// Mit Gesamtbudget: Gesamtbudget minus Abos & Verträge, anteilig umgerechnet
-// (240 € jährlich = 20 € je Monat). Ohne Gesamtbudget: Summe der Kategoriebudgets.
+// Gesamtbudget minus Abos & Verträge, anteilig umgerechnet (240 € jährlich =
+// 20 € je Monat). Ohne Gesamtbudget gibt es keinen Plan (alles 0).
 type budgetPlan struct {
 	TotalCents     int64 `json:"total_cents"`     // Gesamtbudget pro Monat, 0 = keins
 	ContractsCents int64 `json:"contracts_cents"` // Abos & Verträge (Ausgaben), anteilig
 	FreeCents      int64 `json:"free_cents"`      // frei planbar
-	AllocatedCents int64 `json:"allocated_cents"` // davon auf Kategorien verteilt
 	FromPockets    bool  `json:"from_pockets"`    // Gesamtbudget = Summe der Pockets
 }
 
@@ -95,7 +94,6 @@ type pocketSummary struct {
 	SpentCents     int64 `json:"spent_cents"`     // Ausgaben in den Kategorien des Pockets (ohne Verträge)
 	RemainingCents int64 `json:"remaining_cents"` // frei − Ausgaben
 	ShortCents     int64 `json:"short_cents"`     // so viel fehlt monatlich für die Verträge
-	AllocatedCents int64 `json:"allocated_cents"` // Kategoriebudgets im Pocket
 	// Forecast: Vorschau (ohne Einzelposten), nur mit eingetragenem Stand
 	Forecast *pocketForecast `json:"forecast"`
 	// ToppedUpCents: in diesem Monat gebuchte Auffüllungen (Einnahme des Pockets)
@@ -128,7 +126,6 @@ func pocketSummaries(pockets []db.Pocket, contracts []contractShare, cats []cate
 	for _, c := range cats {
 		p := at(c.PocketID)
 		p.SpentCents += c.SpentCents
-		p.AllocatedCents += c.BudgetCents
 	}
 	if none.Contracts > 0 || none.SpentCents > 0 {
 		out = append(out, none)
@@ -145,7 +142,7 @@ func pocketSummaries(pockets []db.Pocket, contracts []contractShare, cats []cate
 }
 
 // planFor rechnet den Plan für den Monat month (erster Tag, UTC).
-func planFor(total int64, recs []db.Recurring, cats []db.Category, month time.Time) (budgetPlan, []contractShare) {
+func planFor(total int64, recs []db.Recurring, month time.Time) (budgetPlan, []contractShare) {
 	p := budgetPlan{TotalCents: total}
 	contracts := []contractShare{}
 	for _, x := range recs {
@@ -156,24 +153,16 @@ func planFor(total int64, recs []db.Recurring, cats []db.Category, month time.Ti
 		p.ContractsCents += share
 		contracts = append(contracts, contractShare{Recurring: x, MonthlyCents: share})
 	}
-	for _, c := range cats {
-		p.AllocatedCents += c.BudgetCents
-	}
 	if total > 0 {
 		p.FreeCents = total - p.ContractsCents
-	} else {
-		p.FreeCents = p.AllocatedCents
 	}
 	return p, contracts
 }
 
 // countsAgainstBudget: Abos/Verträge sind im Plan schon anteilig abgezogen und
-// zählen nicht noch einmal. Ohne Gesamtbudget zählen nur Kategorien mit Budget.
-func countsAgainstBudget(t db.Transaction, total int64, budgeted map[uint64]bool) bool {
-	if t.Kind != "expense" || t.RecurringID != nil {
-		return false
-	}
-	return total > 0 || (t.CategoryID != nil && budgeted[*t.CategoryID])
+// zählen nicht noch einmal.
+func countsAgainstBudget(t db.Transaction) bool {
+	return t.Kind == "expense" && t.RecurringID == nil
 }
 
 // PUT /api/budget/total {"total_cents"} – Gesamtbudget pro Monat, 0 entfernt es.
@@ -213,7 +202,6 @@ type budgetView struct {
 	IncomeCents    int64             `json:"income_cents"`
 	ExpenseCents   int64             `json:"expense_cents"`
 	BalanceCents   int64             `json:"balance_cents"`
-	BudgetCents    int64             `json:"budget_cents"`
 	Uncategorized  int64             `json:"uncategorized_cents"`
 	TopupCents     int64             `json:"topup_cents"` // auf Pockets umgebucht
 	Plan           budgetPlan        `json:"plan"`
@@ -247,16 +235,14 @@ func (s *Server) computeBudget(ctx context.Context, month time.Time) (budgetView
 	if err != nil {
 		return v, err
 	}
-	plan, contracts := planFor(total, recs, cats, month)
+	plan, contracts := planFor(total, recs, month)
 	plan.FromPockets = len(pockets) > 0
 
 	summary := make([]categorySummary, len(cats))
 	index := map[uint64]int{}
-	budgeted := map[uint64]bool{}
 	for i, c := range cats {
 		summary[i] = categorySummary{Category: c}
 		index[c.ID] = i
-		budgeted[c.ID] = c.BudgetCents > 0
 	}
 	var income, expenses, uncategorized, variable, topups int64
 	toppedUp := map[uint64]int64{}
@@ -273,7 +259,7 @@ func (s *Server) computeBudget(ctx context.Context, month time.Time) (budgetView
 		default:
 			expenses += t.AmountCents
 		}
-		if countsAgainstBudget(t, total, budgeted) {
+		if countsAgainstBudget(t) {
 			variable += t.AmountCents
 		}
 		i, ok := -1, false
@@ -315,7 +301,7 @@ func (s *Server) computeBudget(ctx context.Context, month time.Time) (budgetView
 	return budgetView{
 		Month: month.Format("2006-01"), Today: s.today().Format(db.DateLayout),
 		IncomeCents: income, ExpenseCents: expenses, BalanceCents: income - expenses,
-		BudgetCents: plan.AllocatedCents, Uncategorized: uncategorized, TopupCents: topups, Plan: plan,
+		Uncategorized: uncategorized, TopupCents: topups, Plan: plan,
 		VariableCents: variable, RemainingCents: plan.FreeCents - variable,
 		Contracts: contracts, Pockets: ps, Categories: summary, Transactions: txs,
 	}, nil
@@ -362,8 +348,6 @@ func (s *Server) readCategory(w http.ResponseWriter, r *http.Request) (db.Catego
 		writeError(w, http.StatusBadRequest, "Bitte einen Namen mit höchstens 100 Zeichen angeben")
 	case !colorRe.MatchString(c.Color):
 		writeError(w, http.StatusBadRequest, "Farbe ungültig")
-	case c.BudgetCents < 0 || c.BudgetCents > maxCents:
-		writeError(w, http.StatusBadRequest, "Budget ungültig")
 	default:
 		return c, s.checkPocket(w, r, c.PocketID)
 	}

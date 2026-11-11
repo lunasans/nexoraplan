@@ -74,10 +74,6 @@
       handleError(err);
     }
   }
-
-  function share(c) {
-    return c.budget_cents > 0 ? c.spent_cents / c.budget_cents : 0;
-  }
 </script>
 
 <header class="page-head">
@@ -133,21 +129,14 @@
         {#if totalError}<p class="error">{totalError}</p>{/if}
       </form>
     {/if}
-    {#if plan.total_cents || plan.free_cents}
+    {#if plan.total_cents}
       <div class="plan">
-        {#if plan.total_cents}
           <div class="plan-row"><span>Gesamtbudget{#if plan.from_pockets}&nbsp;<span class="muted small">(Summe {nPockets === 1 ? 'aus 1 Pocket' : `von ${nPockets} Pockets`})</span>{/if}</span><span class="mono">{money(plan.total_cents)}</span></div>
           <div class="plan-row minus"><span>Abos &amp; Verträge <span class="muted small">(anteilig, {data.contracts.length})</span></span><span class="mono">−{money(plan.contracts_cents)}</span></div>
           <div class="plan-row sum"><span>Frei verfügbar</span><span class="mono" class:neg={plan.free_cents < 0}>{money(plan.free_cents)}</span></div>
-        {:else}
-          <div class="plan-row sum"><span>Budget der Kategorien</span><span class="mono">{money(plan.free_cents)}</span></div>
-        {/if}
         <div class="plan-row minus"><span>Ausgaben <span class="muted small">(ohne Abos &amp; Verträge)</span></span><span class="mono">−{money(data.variable_cents)}</span></div>
         <div class="plan-row total"><span>Übrig</span><span class="mono" class:neg={data.remaining_cents < 0} id="budget-remaining">{money(data.remaining_cents)}</span></div>
         {#if plan.free_cents > 0}<span class="meter" class:over={used > 1}><span style="width: {Math.min(used, 1) * 100}%"></span></span>{/if}
-        {#if plan.total_cents && plan.allocated_cents}
-          <p class="small muted">Auf Kategorien verteilt: {money(plan.allocated_cents)} · nicht verteilt: {money(plan.free_cents - plan.allocated_cents)}</p>
-        {/if}
       </div>
     {/if}
   </section>
@@ -164,11 +153,9 @@
       <div class="card-head"><h2 id="cats-title">Kategorien</h2><a class="small" href="/budget/kategorien">Verwalten</a></div>
       <div class="cat-list">
         {#each data.categories as c (c.id)}
-          {@const s = share(c)}
           <div class="cat-row">
             <span class="name"><span class="dot" style="background: {c.color}"></span><span>{c.name}</span></span>
-            <span class="nums">{money(c.spent_cents)}{c.budget_cents ? ` / ${money(c.budget_cents)}` : ''}</span>
-            {#if c.budget_cents}<span class="meter" class:over={s > 1}><span style="width: {Math.min(s, 1) * 100}%"></span></span>{/if}
+            <span class="nums">{money(c.spent_cents)}</span>
             {#if c.fixed_cents}<span class="small muted" style="grid-column: 1 / -1">dazu {money(c.fixed_cents)} aus Abos &amp; Verträgen</span>{/if}
           </div>
         {:else}

@@ -99,9 +99,11 @@ func TestTelegramNotifications(t *testing.T) {
 		t.Fatalf("Info (Token darf nie zurückkommen): %v", info)
 	}
 
-	// Daten: Termin heute, Aufgabe heute, Abbuchung morgen, Kategorie überzogen
+	// Daten: Termin heute, Aufgabe heute, Abbuchung morgen, Budget überzogen
+	// (30 € Gesamtbudget − 20 € Haftpflicht anteilig = 10 € frei, 15 € ausgegeben)
 	var food struct{ ID uint64 }
-	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel", "budget_cents": 1000}, 201, &food)
+	c.do("PUT", "/api/budget/total", map[string]any{"total_cents": 3000}, 200, nil)
+	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel"}, 201, &food)
 	c.do("POST", "/api/transactions", map[string]any{"kind": "expense", "amount_cents": 1500, "day": "2026-11-10", "category_id": food.ID}, 201, nil)
 	c.do("POST", "/api/recurring", map[string]any{"title": "Haftpflicht", "kind": "expense", "amount_cents": 24000, "day": 12,
 		"interval_months": 12, "starts_on": "2026-11-12", "payment_method": "sepa"}, 201, nil)
@@ -139,7 +141,7 @@ func TestTelegramNotifications(t *testing.T) {
 	if !strings.Contains(got[1], "Morgen (Donnerstag, 12.11.2026) wird abgebucht") || !strings.Contains(got[1], "Haftpflicht 240,00 € · SEPA-Lastschrift") {
 		t.Errorf("Abbuchung:\n%s", got[1])
 	}
-	if !strings.Contains(got[2], "Kategorie Lebensmittel: 15,00 € von 10,00 € ausgegeben (5,00 € drüber)") {
+	if !strings.Contains(got[2], "Budget November überschritten: 5,00 € mehr ausgegeben als frei war (10,00 €)") {
 		t.Errorf("Warnung:\n%s", got[2])
 	}
 
@@ -157,23 +159,18 @@ func TestTelegramNotifications(t *testing.T) {
 		t.Fatalf("nächster Tag: %q", got)
 	}
 
-	// Warnung kommt nach fehlgeschlagenem Senden später doch noch
-	if !strings.Contains(tg.texts()[2], "Budget November überschritten") {
-		t.Errorf("Budget-Warnung fehlt am 11.11.:\n%s", tg.texts()[2])
-	}
-	var fun struct{ ID uint64 }
-	c.do("POST", "/api/categories", map[string]any{"name": "Freizeit", "budget_cents": 2000}, 201, &fun)
-	c.do("POST", "/api/transactions", map[string]any{"kind": "expense", "amount_cents": 3000, "day": "2026-11-12", "category_id": fun.ID}, 201, nil)
+	// Warnung kommt nach fehlgeschlagenem Senden später doch noch (neuer Monat, neue Warnung)
+	c.do("POST", "/api/transactions", map[string]any{"kind": "expense", "amount_cents": 3000, "day": "2026-12-12", "category_id": food.ID}, 201, nil)
 	tg.failSend = true
-	s.now = func() time.Time { return time.Date(2026, 11, 13, 8, 0, 0, 0, berlin) }
+	s.now = func() time.Time { return time.Date(2026, 12, 13, 8, 0, 0, 0, berlin) }
 	if err := s.notifyTick(ctx); err == nil {
 		t.Fatal("Fehler beim Senden muss gemeldet werden")
 	}
 	tg.failSend = false
-	s.now = func() time.Time { return time.Date(2026, 11, 14, 8, 0, 0, 0, berlin) }
+	s.now = func() time.Time { return time.Date(2026, 12, 14, 8, 0, 0, 0, berlin) }
 	s.notifyTick(ctx)
 	last := tg.texts()[len(tg.texts())-1]
-	if !strings.Contains(last, "Kategorie Freizeit") || strings.Contains(last, "Lebensmittel") {
+	if !strings.Contains(last, "Budget Dezember überschritten") || strings.Contains(last, "November") {
 		t.Fatalf("Warnung nicht nachgeholt: %q", last)
 	}
 

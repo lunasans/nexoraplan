@@ -259,7 +259,6 @@ type budgetResp struct {
 	Income        int64 `json:"income_cents"`
 	Expense       int64 `json:"expense_cents"`
 	Balance       int64 `json:"balance_cents"`
-	Budget        int64 `json:"budget_cents"`
 	Uncategorized int64 `json:"uncategorized_cents"`
 	Categories    []categorySummary
 	Transactions  []db.Transaction
@@ -269,7 +268,7 @@ func TestBudget(t *testing.T) {
 	s, c := testServer(t)
 	setup(c)
 	var food db.Category
-	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel", "color": "#15803D", "budget_cents": 30000}, 201, &food)
+	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel", "color": "#15803D"}, 201, &food)
 	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel"}, 409, nil)
 	c.do("POST", "/api/categories", map[string]any{"name": "X", "color": "rot"}, 400, nil)
 
@@ -285,13 +284,27 @@ func TestBudget(t *testing.T) {
 	var b budgetResp
 	c.do("GET", "/api/budget?month=2026-11", nil, 200, &b)
 	// heute = 11.11.: Gehalt 1.11. gebucht, Miete 30.11. noch nicht
-	if b.Income != 250000 || b.Expense != 4250 || b.Balance != 245750 || b.Budget != 30000 || b.Categories[0].SpentCents != 4250 {
+	if b.Income != 250000 || b.Expense != 4250 || b.Balance != 245750 || b.Categories[0].SpentCents != 4250 {
 		t.Fatalf("November: %+v", b)
 	}
 	c.do("GET", "/api/budget?month=2026-10", nil, 200, &b)
 	if b.Income != 250000 || b.Expense != 90000 || b.Uncategorized != 90000 {
 		t.Fatalf("Oktober (Miete am 31.10.): %+v", b)
 	}
+
+	// Kategorie nachträglich zuordnen: schon gebuchte Miete zieht mit
+	var wohnen db.Category
+	c.do("POST", "/api/categories", map[string]any{"name": "Wohnen"}, 201, &wohnen)
+	c.do("PUT", fmt.Sprintf("/api/recurring/%d", rent.ID), map[string]any{"title": "Miete", "kind": "expense", "amount_cents": 90000, "day": 31,
+		"starts_on": "2026-10-01", "category_id": wohnen.ID}, 200, nil)
+	c.do("GET", "/api/budget?month=2026-10", nil, 200, &b)
+	if b.Uncategorized != 0 || b.Categories[1].Name != "Wohnen" || b.Categories[1].FixedCents != 90000 {
+		t.Fatalf("Oktober nach Zuordnung: %+v", b)
+	}
+	// und wieder zurück (ohne Kategorie), damit der Rest des Tests unverändert gilt
+	c.do("PUT", fmt.Sprintf("/api/recurring/%d", rent.ID), map[string]any{"title": "Miete", "kind": "expense", "amount_cents": 90000, "day": 31,
+		"starts_on": "2026-10-01"}, 200, nil)
+	c.do("DELETE", fmt.Sprintf("/api/categories/%d", wohnen.ID), nil, 204, nil)
 
 	// Gelöschte Buchung kommt nicht wieder
 	var gehalt db.Transaction
@@ -316,10 +329,10 @@ func TestBudget(t *testing.T) {
 		t.Fatalf("Miete November: %+v", b)
 	}
 
-	// Woche mit Monatswechsel: Budget anteilig aus November und Dezember
+	// Woche ohne Gesamtbudget: nichts geplant, nichts gegen das Budget gezählt
 	var w weekResp
 	c.do("GET", "/api/week?date=2026-11-30", nil, 200, &w)
-	want := int64(30000/30 + 6*(30000/31))
+	want := int64(0)
 	if w.Budget.Planned != want || w.Budget.Spent != 90000 || w.Budget.Budgeted != 0 || w.Days[0].SpentCents != 90000 {
 		t.Fatalf("Woche: geplant %d (erwartet %d), ausgegeben %d", w.Budget.Planned, want, w.Budget.Spent)
 	}
@@ -339,7 +352,7 @@ func TestBudgetTotal(t *testing.T) {
 	_, c := testServer(t)
 	setup(c)
 	var food db.Category
-	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel", "budget_cents": 40000}, 201, &food)
+	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel"}, 201, &food)
 	c.do("PUT", "/api/budget/total", map[string]any{"total_cents": 200000}, 200, nil)
 	c.do("PUT", "/api/budget/total", map[string]any{"total_cents": -1}, 400, nil)
 
@@ -361,7 +374,7 @@ func TestBudgetTotal(t *testing.T) {
 	c.do("GET", "/api/budget?month=2026-11", nil, 200, &b)
 	wantContracts := int64(1299 + 2000 + 1000)
 	if b.Plan.TotalCents != 200000 || b.Plan.ContractsCents != wantContracts || b.Plan.FreeCents != 200000-wantContracts ||
-		b.Plan.AllocatedCents != 40000 || len(b.Contracts) != 3 {
+		len(b.Contracts) != 3 {
 		t.Fatalf("Plan: %+v, Verträge %d", b.Plan, len(b.Contracts))
 	}
 	// Gebucht im November: Streaming (5.11.) – zählt nicht noch einmal gegen den freien Teil
@@ -468,7 +481,7 @@ func TestPockets(t *testing.T) {
 	c.do("PUT", "/api/budget/total", map[string]any{"total_cents": 100}, 409, nil)
 
 	var food db.Category
-	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel", "budget_cents": 40000, "pocket_id": haus.ID}, 201, &food)
+	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel", "pocket_id": haus.ID}, 201, &food)
 	c.do("POST", "/api/categories", map[string]any{"name": "X", "pocket_id": 999}, 400, nil)
 	// Versicherungen brauchen anteilig 20 € + 25 € = 45 €, drauf gehen nur 40 €
 	c.do("POST", "/api/recurring", map[string]any{"title": "Haftpflicht", "kind": "expense", "amount_cents": 24000, "day": 15,
@@ -502,7 +515,7 @@ func TestPockets(t *testing.T) {
 		byName[p.Name] = p
 	}
 	h := byName["Haushalt"]
-	if h.SpentCents != 5000 || h.RemainingCents != 55000 || h.AllocatedCents != 40000 || h.ShortCents != 0 {
+	if h.SpentCents != 5000 || h.RemainingCents != 55000 || h.ShortCents != 0 {
 		t.Fatalf("Haushalt: %+v", h)
 	}
 	if none := byName["Ohne Pocket"]; none.ContractsCents != 1299 || none.ShortCents != 0 {

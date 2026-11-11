@@ -66,8 +66,7 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
   - **Zahlungsart:** SEPA-Lastschrift, Dauerauftrag, Überweisung, Kreditkarte, PayPal, Bar oder Sonstige, dazu eine kurze Notiz wie „Visa …1234“.
     - Vollständige Karten- und Kontonummern (IBAN) lehnt die App ab.
     - Die Liste zeigt die Monatssumme je Zahlungsart.
-- **Kategorien** mit Farbe und optionalem Budget teilen den freien Teil auf.
-  - Ohne Gesamtbudget gilt die Summe der Kategoriebudgets.
+- **Kategorien** mit Farbe ordnen Buchungen zu (optional einem Pocket) – ein eigenes Budget haben sie nicht.
 - **Buchungen** (Ausgabe/Einnahme) mit Datum, Kategorie und Notiz.
   - Die Monatsübersicht zeigt Einnahmen, gebuchte Ausgaben und Saldo.
 - **In der Woche** steht der Anteil des freien Budgets, und auch über den Monatswechsel stimmt die Rechnung.
@@ -79,7 +78,7 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
 - **Einmal täglich zur eingestellten Uhrzeit** (Standard 07:00, nach einem Neustart am selben Tag nachgeholt), jede Nachricht einzeln:
   - **Tagesübersicht:** Termine (eigene und SOGo), Aufgaben, heutige Abbuchungen, Rest im Budget.
   - **Abbuchungen vorher:** 1, 3 oder 7 Tage vorher, mit Pocket und Zahlungsart.
-  - **Engpässe & Budget:** Engpass aus der Pocket-Vorschau, Pocket im Monat zu knapp, Monatsbudget oder Kategorie überschritten.
+  - **Engpässe & Budget:** Engpass aus der Pocket-Vorschau, Pocket im Monat zu knapp, Monatsbudget überschritten.
     - Jedes Ereignis kommt nur einmal.
     - Schlägt das Senden fehl, kommt es beim nächsten Mal.
 - **Ausgehende Firewall:** Ist sie im Panel gesperrt, muss `api.telegram.org` erlaubt sein.

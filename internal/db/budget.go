@@ -7,11 +7,10 @@ import (
 )
 
 type Category struct {
-	ID          uint64  `json:"id"`
-	Name        string  `json:"name"`
-	Color       string  `json:"color"`
-	BudgetCents int64   `json:"budget_cents"` // Monatsbudget, 0 = keins
-	PocketID    *uint64 `json:"pocket_id"`    // Ausgaben dieser Kategorie gehen von diesem Pocket
+	ID       uint64  `json:"id"`
+	Name     string  `json:"name"`
+	Color    string  `json:"color"`
+	PocketID *uint64 `json:"pocket_id"` // Ausgaben dieser Kategorie gehen von diesem Pocket
 }
 
 // Pocket ist ein Unterkonto, auf das monatlich ein fester Betrag geht.
@@ -71,7 +70,7 @@ func nullID(n sql.NullInt64) *uint64 {
 // --- Kategorien -------------------------------------------------------------
 
 func (r *Repo) Categories(ctx context.Context) ([]Category, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, name, color, budget_cents, pocket_id FROM categories ORDER BY position, name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, color, pocket_id FROM categories ORDER BY position, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +79,7 @@ func (r *Repo) Categories(ctx context.Context) ([]Category, error) {
 	for rows.Next() {
 		var c Category
 		var pocket sql.NullInt64
-		if err := rows.Scan(&c.ID, &c.Name, &c.Color, &c.BudgetCents, &pocket); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Color, &pocket); err != nil {
 			return nil, err
 		}
 		c.PocketID = nullID(pocket)
@@ -90,8 +89,8 @@ func (r *Repo) Categories(ctx context.Context) ([]Category, error) {
 }
 
 func (r *Repo) CreateCategory(ctx context.Context, c Category) (Category, error) {
-	res, err := r.db.ExecContext(ctx, `INSERT INTO categories (name, color, budget_cents, pocket_id, position)
-		SELECT ?, ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM categories`, c.Name, c.Color, c.BudgetCents, c.PocketID)
+	res, err := r.db.ExecContext(ctx, `INSERT INTO categories (name, color, pocket_id, position)
+		SELECT ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM categories`, c.Name, c.Color, c.PocketID)
 	if isDuplicate(err) {
 		return c, ErrExists
 	}
@@ -104,8 +103,8 @@ func (r *Repo) CreateCategory(ctx context.Context, c Category) (Category, error)
 }
 
 func (r *Repo) UpdateCategory(ctx context.Context, c Category) error {
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, budget_cents = ?, pocket_id = ? WHERE id = ?`,
-		c.Name, c.Color, c.BudgetCents, c.PocketID, c.ID)
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, pocket_id = ? WHERE id = ?`,
+		c.Name, c.Color, c.PocketID, c.ID)
 	if isDuplicate(err) {
 		return ErrExists
 	}
@@ -374,10 +373,29 @@ func (r *Repo) CreateRecurring(ctx context.Context, x Recurring) (Recurring, err
 }
 
 // UpdateRecurring ändert die Vorlage; bereits gebuchte Monate bleiben, wie sie sind.
+// UpdateRecurring ändert die feste Buchung. Bekommt sie eine andere Kategorie,
+// ziehen die schon gebuchten Buchungen mit – außer denen, die von Hand einer
+// anderen Kategorie zugeordnet wurden.
 func (r *Repo) UpdateRecurring(ctx context.Context, x Recurring) error {
-	return affected(r.db.ExecContext(ctx, `UPDATE recurring SET title = ?, kind = ?, amount_cents = ?, category_id = ?, pocket_id = ?, day = ?,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var old sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT category_id FROM recurring WHERE id = ? FOR UPDATE`, x.ID).Scan(&old); err != nil {
+		return notFound(err)
+	}
+	if err := affected(tx.ExecContext(ctx, `UPDATE recurring SET title = ?, kind = ?, amount_cents = ?, category_id = ?, pocket_id = ?, day = ?,
 		interval_months = ?, starts_on = ?, ends_on = ?, payment_method = ?, payment_note = ? WHERE id = ?`,
-		x.Title, x.Kind, x.AmountCents, x.CategoryID, x.PocketID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn, x.PaymentMethod, x.PaymentNote, x.ID))
+		x.Title, x.Kind, x.AmountCents, x.CategoryID, x.PocketID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn, x.PaymentMethod, x.PaymentNote, x.ID)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE transactions SET category_id = ? WHERE recurring_id = ? AND category_id <=> ?`,
+		x.CategoryID, x.ID, old); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetRecurringLogo speichert ein Logo (PNG); nil entfernt es.
