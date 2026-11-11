@@ -40,7 +40,12 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
 - Zugangsdaten gehen nur an den eingestellten Host, auch bei Weiterleitungen oder fremden Adressen in Serverantworten.
 
 **Budget**
-- **Gesamtbudget pro Monat**, z. B. 2.000 €.
+- **Pockets** sind Unterkonten, wie die Pockets der C24 Bank. Jedes hat einen Betrag, der monatlich draufgeht, und die **Summe ist das Gesamtbudget**.
+  - Abos und Verträge werden von einem Pocket abgebucht, Kategorien gehören zu einem Pocket.
+  - Je Pocket rechnet die App: drauf − Abos & Verträge (anteilig) = frei − Ausgaben = übrig.
+  - Reicht der Betrag nicht für die Verträge, warnt sie und nennt den fehlenden Betrag, z. B. „Dauerauftrag auf 920 € erhöhen“.
+  - Kontostände ruft die App nicht ab, sie plant nur.
+- **Gesamtbudget pro Monat** (ohne Pockets von Hand), z. B. 2.000 €.
   - Davon gehen Abos & Verträge **anteilig** ab: Ein Jahresvertrag über 240 € zählt jeden Monat mit 20 €.
   - Der Rest ist frei für Einkäufe, Freizeit usw.
   - Die Übersicht rechnet: Gesamtbudget − Abos & Verträge = frei verfügbar − Ausgaben = übrig.
@@ -143,7 +148,8 @@ Alle Endpunkte außer `health`, `setup`, `login` und `logout` brauchen eine Sitz
 | PUT | `/api/calendars/visibility`, `/api/calendars/default` | Kalender ein-/ausblenden, Standard setzen |
 | GET/PUT/DELETE | `/api/caldav` | Kalenderserver anzeigen / verbinden (prüft zuerst) / trennen |
 | GET | `/api/budget?month=2026-11` | Monatsübersicht mit Plan (Gesamtbudget, Abos & Verträge anteilig, frei, übrig) |
-| PUT | `/api/budget/total` | Gesamtbudget pro Monat `{total_cents}`, 0 entfernt es |
+| PUT | `/api/budget/total` | Gesamtbudget pro Monat `{total_cents}`, 0 entfernt es (nur ohne Pockets) |
+| GET/POST, PUT/DELETE | `/api/pockets`, `/api/pockets/{id}` | Pockets `{name, color, monthly_cents}`; Kategorien und Abos haben `pocket_id` |
 | GET/POST, PUT/DELETE | `/api/categories`, `/api/categories/{id}` | Kategorien |
 | POST, PUT/DELETE | `/api/transactions`, `/api/transactions/{id}` | Buchungen |
 | GET/POST, PUT/DELETE | `/api/recurring`, `/api/recurring/{id}` | Abos, Verträge, feste Einnahmen `{…, interval_months: 1\|3\|6\|12, payment_method, payment_note}` |

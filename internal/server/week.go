@@ -77,7 +77,7 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	total, err := s.budgetTotal(ctx)
+	total, _, err := s.budgetTotal(ctx)
 	if err != nil {
 		internalError(w, r, err)
 		return

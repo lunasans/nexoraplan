@@ -124,6 +124,10 @@ func New(repo *db.Repo, opts Options) (*Server, error) {
 
 			r.Get("/budget", s.handleBudget)
 			r.Put("/budget/total", s.handleBudgetTotal)
+			r.Get("/pockets", s.handlePockets)
+			r.Post("/pockets", s.handlePocketCreate)
+			r.Put("/pockets/{id}", s.handlePocketUpdate)
+			r.Delete("/pockets/{id}", s.handlePocketDelete)
 			r.Get("/categories", s.handleCategories)
 			r.Post("/categories", s.handleCategoryCreate)
 			r.Put("/categories/{id}", s.handleCategoryUpdate)

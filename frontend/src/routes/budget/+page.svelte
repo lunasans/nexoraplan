@@ -6,6 +6,7 @@
   import { addMonths, intervalText, money, monthTitle, parseMoney, paymentLabel, moneyInput, shortDate, weekdayShort } from '#lib/format.js';
   import { categories, handleError, loadCategories, openTransaction, showToast } from '#lib/stores.svelte.js';
   import ContractLogo from '#lib/components/ContractLogo.svelte';
+  import BudgetTabs from '#lib/components/BudgetTabs.svelte';
   import Icon from '#lib/components/Icon.svelte';
 
   let data = $state(null);
@@ -93,22 +94,29 @@
   {/if}
 </header>
 
-<nav class="tabs" aria-label="Budget">
-  <a class="active" href="/budget" aria-current="page">Übersicht</a>
-  <a href="/budget/kategorien">Kategorien, Abos &amp; Verträge</a>
-</nav>
+<BudgetTabs />
 
 {#if data}
+  {#if data.pockets.some((p) => p.short_cents)}
+    <div class="banner" role="status">
+      <span><strong>Pocket reicht nicht:</strong>
+        {data.pockets.filter((p) => p.short_cents).map((p) => `${p.name} – ${money(p.short_cents)} zu wenig im Monat`).join(', ')}</span>
+      <a class="small" href="/budget/pockets">Pockets</a>
+    </div>
+  {/if}
+
   <section class="card" aria-labelledby="plan-title">
     <div class="card-head">
       <h2 id="plan-title">Gesamtbudget</h2>
-      {#if plan.total_cents && editTotal === null}<button type="button" class="ghost" onclick={startEditTotal}><Icon name="pencil" />Ändern</button>{/if}
+      {#if plan.from_pockets}<a class="small" href="/budget/pockets">Pockets ändern</a>
+      {:else if plan.total_cents && editTotal === null}<button type="button" class="ghost" onclick={startEditTotal}><Icon name="pencil" />Ändern</button>{/if}
     </div>
-    {#if editTotal !== null || !plan.total_cents}
+    {#if !plan.from_pockets && (editTotal !== null || !plan.total_cents)}
       <form class="card-body form" onsubmit={saveTotal} novalidate>
         {#if !plan.total_cents}
           <p class="small muted">Lege fest, wie viel du im Monat insgesamt ausgeben willst. Abos und Verträge gehen davon
-            anteilig ab (240 € im Jahr = 20 € im Monat), der Rest ist frei für Einkäufe, Freizeit usw.</p>
+            anteilig ab (240 € im Jahr = 20 € im Monat), der Rest ist frei für Einkäufe, Freizeit usw.
+            Mit Unterkonten (z. B. C24-Pockets) legst du stattdessen <a href="/budget/pockets">Pockets</a> an – deren Summe ist dann das Gesamtbudget.</p>
         {/if}
         <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: end">
           <label style="flex: 1 1 180px">Gesamtbudget pro Monat in €
@@ -126,7 +134,7 @@
     {#if plan.total_cents || plan.free_cents}
       <div class="plan">
         {#if plan.total_cents}
-          <div class="plan-row"><span>Gesamtbudget</span><span class="mono">{money(plan.total_cents)}</span></div>
+          <div class="plan-row"><span>Gesamtbudget{#if plan.from_pockets} <span class="muted small">(Summe von {data.pockets.filter((p) => p.id).length} Pockets)</span>{/if}</span><span class="mono">{money(plan.total_cents)}</span></div>
           <div class="plan-row minus"><span>Abos &amp; Verträge <span class="muted small">(anteilig, {data.contracts.length})</span></span><span class="mono">−{money(plan.contracts_cents)}</span></div>
           <div class="plan-row sum"><span>Frei verfügbar</span><span class="mono" class:neg={plan.free_cents < 0}>{money(plan.free_cents)}</span></div>
         {:else}

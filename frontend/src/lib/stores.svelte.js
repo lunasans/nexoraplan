@@ -57,3 +57,15 @@ export function openEvent(data, onsaved) {
 export function openTransaction(data, onsaved) {
   dialogs.transaction = { ...data, onsaved };
 }
+
+// Pockets (Unterkonten, z. B. C24) – für Auswahlfelder in Dialogen
+export const pockets = $state({ list: [], loaded: false });
+
+export async function loadPockets() {
+  try {
+    pockets.list = await api('GET', '/api/pockets');
+    pockets.loaded = true;
+  } catch (err) {
+    handleError(err);
+  }
+}

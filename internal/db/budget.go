@@ -7,10 +7,19 @@ import (
 )
 
 type Category struct {
-	ID          uint64 `json:"id"`
-	Name        string `json:"name"`
-	Color       string `json:"color"`
-	BudgetCents int64  `json:"budget_cents"` // Monatsbudget, 0 = keins
+	ID          uint64  `json:"id"`
+	Name        string  `json:"name"`
+	Color       string  `json:"color"`
+	BudgetCents int64   `json:"budget_cents"` // Monatsbudget, 0 = keins
+	PocketID    *uint64 `json:"pocket_id"`    // Ausgaben dieser Kategorie gehen von diesem Pocket
+}
+
+// Pocket ist ein Unterkonto, auf das monatlich ein fester Betrag geht.
+type Pocket struct {
+	ID           uint64 `json:"id"`
+	Name         string `json:"name"`
+	Color        string `json:"color"`
+	MonthlyCents int64  `json:"monthly_cents"`
 }
 
 type Transaction struct {
@@ -29,7 +38,8 @@ type Recurring struct {
 	Kind        string  `json:"kind"`
 	AmountCents int64   `json:"amount_cents"`
 	CategoryID  *uint64 `json:"category_id"`
-	Day         int     `json:"day"` // 1–31; fehlt der Tag im Monat, am letzten
+	PocketID    *uint64 `json:"pocket_id"` // abgebucht von diesem Pocket
+	Day         int     `json:"day"`       // 1–31; fehlt der Tag im Monat, am letzten
 	// IntervalMonths: 1 monatlich, 3 vierteljährlich, 6 halbjährlich, 12 jährlich –
 	// gebucht ab dem Monat von StartsOn
 	IntervalMonths int     `json:"interval_months"`
@@ -54,7 +64,7 @@ func nullID(n sql.NullInt64) *uint64 {
 // --- Kategorien -------------------------------------------------------------
 
 func (r *Repo) Categories(ctx context.Context) ([]Category, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, name, color, budget_cents FROM categories ORDER BY position, name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, color, budget_cents, pocket_id FROM categories ORDER BY position, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -62,17 +72,19 @@ func (r *Repo) Categories(ctx context.Context) ([]Category, error) {
 	out := []Category{}
 	for rows.Next() {
 		var c Category
-		if err := rows.Scan(&c.ID, &c.Name, &c.Color, &c.BudgetCents); err != nil {
+		var pocket sql.NullInt64
+		if err := rows.Scan(&c.ID, &c.Name, &c.Color, &c.BudgetCents, &pocket); err != nil {
 			return nil, err
 		}
+		c.PocketID = nullID(pocket)
 		out = append(out, c)
 	}
 	return out, rows.Err()
 }
 
 func (r *Repo) CreateCategory(ctx context.Context, c Category) (Category, error) {
-	res, err := r.db.ExecContext(ctx, `INSERT INTO categories (name, color, budget_cents, position)
-		SELECT ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM categories`, c.Name, c.Color, c.BudgetCents)
+	res, err := r.db.ExecContext(ctx, `INSERT INTO categories (name, color, budget_cents, pocket_id, position)
+		SELECT ?, ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM categories`, c.Name, c.Color, c.BudgetCents, c.PocketID)
 	if isDuplicate(err) {
 		return c, ErrExists
 	}
@@ -85,8 +97,8 @@ func (r *Repo) CreateCategory(ctx context.Context, c Category) (Category, error)
 }
 
 func (r *Repo) UpdateCategory(ctx context.Context, c Category) error {
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, budget_cents = ? WHERE id = ?`,
-		c.Name, c.Color, c.BudgetCents, c.ID)
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, budget_cents = ?, pocket_id = ? WHERE id = ?`,
+		c.Name, c.Color, c.BudgetCents, c.PocketID, c.ID)
 	if isDuplicate(err) {
 		return ErrExists
 	}
@@ -96,6 +108,59 @@ func (r *Repo) UpdateCategory(ctx context.Context, c Category) error {
 // DeleteCategory: Buchungen bleiben, nur ohne Kategorie.
 func (r *Repo) DeleteCategory(ctx context.Context, id uint64) error {
 	return affected(r.db.ExecContext(ctx, `DELETE FROM categories WHERE id = ?`, id))
+}
+
+// --- Pockets ----------------------------------------------------------------
+
+func (r *Repo) Pockets(ctx context.Context) ([]Pocket, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, color, monthly_cents FROM pockets ORDER BY position, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Pocket{}
+	for rows.Next() {
+		var p Pocket
+		if err := rows.Scan(&p.ID, &p.Name, &p.Color, &p.MonthlyCents); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) CreatePocket(ctx context.Context, p Pocket) (Pocket, error) {
+	res, err := r.db.ExecContext(ctx, `INSERT INTO pockets (name, color, monthly_cents, position)
+		SELECT ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM pockets`, p.Name, p.Color, p.MonthlyCents)
+	if isDuplicate(err) {
+		return p, ErrExists
+	}
+	if err != nil {
+		return p, err
+	}
+	id, _ := res.LastInsertId()
+	p.ID = uint64(id)
+	return p, nil
+}
+
+func (r *Repo) UpdatePocket(ctx context.Context, p Pocket) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE pockets SET name = ?, color = ?, monthly_cents = ? WHERE id = ?`,
+		p.Name, p.Color, p.MonthlyCents, p.ID)
+	if isDuplicate(err) {
+		return ErrExists
+	}
+	return affected(res, err)
+}
+
+// DeletePocket: Abos/Verträge und Kategorien bleiben, nur ohne Pocket.
+func (r *Repo) DeletePocket(ctx context.Context, id uint64) error {
+	return affected(r.db.ExecContext(ctx, `DELETE FROM pockets WHERE id = ?`, id))
+}
+
+func (r *Repo) PocketExists(ctx context.Context, id uint64) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pockets WHERE id = ?`, id).Scan(&n)
+	return n > 0, err
 }
 
 func (r *Repo) CategoryExists(ctx context.Context, id uint64) (bool, error) {
@@ -166,19 +231,20 @@ func (r *Repo) DeleteTransaction(ctx context.Context, id uint64) error {
 // --- Feste Buchungen --------------------------------------------------------
 
 // Ohne das Logo selbst – das lädt nur RecurringLogo.
-const recColumns = `id, title, kind, amount_cents, category_id, day, interval_months, starts_on, ends_on, booked_until,
+const recColumns = `id, title, kind, amount_cents, category_id, pocket_id, day, interval_months, starts_on, ends_on, booked_until,
 	payment_method, payment_note, IF(logo IS NULL, 0, logo_version)`
 
 func scanRecurring(row scanner) (Recurring, error) {
 	var x Recurring
-	var cat sql.NullInt64
+	var cat, pocket sql.NullInt64
 	var starts time.Time
 	var ends, booked sql.NullTime
-	if err := row.Scan(&x.ID, &x.Title, &x.Kind, &x.AmountCents, &cat, &x.Day, &x.IntervalMonths, &starts, &ends, &booked,
+	if err := row.Scan(&x.ID, &x.Title, &x.Kind, &x.AmountCents, &cat, &pocket, &x.Day, &x.IntervalMonths, &starts, &ends, &booked,
 		&x.PaymentMethod, &x.PaymentNote, &x.LogoVersion); err != nil {
 		return x, notFound(err)
 	}
 	x.CategoryID = nullID(cat)
+	x.PocketID = nullID(pocket)
 	x.StartsOn = dateString(starts)
 	x.EndsOn = nullDate(ends)
 	x.BookedUntil = nullDate(booked)
@@ -207,9 +273,9 @@ func (r *Repo) RecurringByID(ctx context.Context, id uint64) (Recurring, error) 
 }
 
 func (r *Repo) CreateRecurring(ctx context.Context, x Recurring) (Recurring, error) {
-	res, err := r.db.ExecContext(ctx, `INSERT INTO recurring (title, kind, amount_cents, category_id, day, interval_months, starts_on, ends_on,
-		payment_method, payment_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		x.Title, x.Kind, x.AmountCents, x.CategoryID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn, x.PaymentMethod, x.PaymentNote)
+	res, err := r.db.ExecContext(ctx, `INSERT INTO recurring (title, kind, amount_cents, category_id, pocket_id, day, interval_months, starts_on, ends_on,
+		payment_method, payment_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		x.Title, x.Kind, x.AmountCents, x.CategoryID, x.PocketID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn, x.PaymentMethod, x.PaymentNote)
 	if err != nil {
 		return x, err
 	}
@@ -219,9 +285,9 @@ func (r *Repo) CreateRecurring(ctx context.Context, x Recurring) (Recurring, err
 
 // UpdateRecurring ändert die Vorlage; bereits gebuchte Monate bleiben, wie sie sind.
 func (r *Repo) UpdateRecurring(ctx context.Context, x Recurring) error {
-	return affected(r.db.ExecContext(ctx, `UPDATE recurring SET title = ?, kind = ?, amount_cents = ?, category_id = ?, day = ?,
+	return affected(r.db.ExecContext(ctx, `UPDATE recurring SET title = ?, kind = ?, amount_cents = ?, category_id = ?, pocket_id = ?, day = ?,
 		interval_months = ?, starts_on = ?, ends_on = ?, payment_method = ?, payment_note = ? WHERE id = ?`,
-		x.Title, x.Kind, x.AmountCents, x.CategoryID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn, x.PaymentMethod, x.PaymentNote, x.ID))
+		x.Title, x.Kind, x.AmountCents, x.CategoryID, x.PocketID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn, x.PaymentMethod, x.PaymentNote, x.ID))
 }
 
 // SetRecurringLogo speichert ein Logo (PNG); nil entfernt es.

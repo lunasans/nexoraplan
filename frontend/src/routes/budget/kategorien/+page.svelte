@@ -2,9 +2,10 @@
 <script>
   import { api } from '#lib/api.js';
   import { INTERVALS, PAYMENT_METHODS, dayString, intervalText, money, moneyInput, parseMoney, paymentLabel, shortDate } from '#lib/format.js';
-  import { categories, handleError, loadCategories, showToast } from '#lib/stores.svelte.js';
+  import { categories, handleError, loadCategories, loadPockets, pockets, showToast } from '#lib/stores.svelte.js';
   import DateInput from '#lib/components/DateInput.svelte';
   import ContractLogo from '#lib/components/ContractLogo.svelte';
+  import BudgetTabs from '#lib/components/BudgetTabs.svelte';
   import Icon from '#lib/components/Icon.svelte';
   import Modal from '#lib/components/Modal.svelte';
 
@@ -16,6 +17,7 @@
   let error = $state('');
   let busy = $state(false);
 
+  const pocketById = $derived(Object.fromEntries(pockets.list.map((p) => [p.id, p])));
   const catById = $derived(Object.fromEntries(categories.list.map((c) => [c.id, c])));
   const totalBudget = $derived(categories.list.reduce((s, c) => s + c.budget_cents, 0));
   // Anteil pro Monat: 240 € jährlich = 20 €
@@ -36,6 +38,7 @@
   $effect(() => {
     loadCategories();
     loadRecurring();
+    loadPockets();
   });
 
   function ended(r) {
@@ -53,8 +56,8 @@
   function editCat(c) {
     error = '';
     cat = c
-      ? { id: c.id, name: c.name, color: c.color, budget: moneyInput(c.budget_cents) }
-      : { id: 0, name: '', color: COLORS[categories.list.length % COLORS.length], budget: '' };
+      ? { id: c.id, name: c.name, color: c.color, budget: moneyInput(c.budget_cents), pocket: c.pocket_id ?? '' }
+      : { id: 0, name: '', color: COLORS[categories.list.length % COLORS.length], budget: '', pocket: '' };
   }
 
   async function saveCat(event) {
@@ -65,7 +68,7 @@
       return;
     }
     busy = true;
-    const body = { name: cat.name, color: cat.color, budget_cents: cents };
+    const body = { name: cat.name, color: cat.color, budget_cents: cents, pocket_id: cat.pocket === '' ? null : Number(cat.pocket) };
     try {
       if (cat.id) await api('PUT', `/api/categories/${cat.id}`, body);
       else await api('POST', '/api/categories', body);
@@ -95,7 +98,7 @@
     const today = dayString(new Date());
     if (!r) {
       rec = { id: 0, title: '', kind: 'expense', amount: '', category: '', interval: 1, first: today, ends_on: '', day: 0,
-        payment: '', paymentNote: '', logoVersion: 0, logoFile: null, logoPreview: '', removeLogo: false };
+        payment: '', paymentNote: '', pocket: '', logoVersion: 0, logoFile: null, logoPreview: '', removeLogo: false };
       return;
     }
     // Erste Abbuchung = Monat von „starts_on“ am gebuchten Tag (31. im November = 30.)
@@ -104,7 +107,7 @@
     const first = `${r.starts_on.slice(0, 8)}${String(Math.min(r.day, last)).padStart(2, '0')}`;
     rec = { id: r.id, title: r.title, kind: r.kind, amount: moneyInput(r.amount_cents), category: r.category_id ?? '',
       interval: r.interval_months || 1, first, ends_on: r.ends_on ?? '', day: r.day, origFirst: first,
-      payment: r.payment_method || '', paymentNote: r.payment_note || '', logoVersion: r.logo_version,
+      payment: r.payment_method || '', paymentNote: r.payment_note || '', pocket: r.pocket_id ?? '', logoVersion: r.logo_version,
       logoFile: null, logoPreview: '', removeLogo: false };
   }
 
@@ -158,6 +161,7 @@
       // Unverändertes Datum behält z. B. „am 31.“ (Monatsletzter), auch wenn der erste Monat kürzer ist
       day: rec.id && rec.first === rec.origFirst ? rec.day : Number(rec.first.slice(8)),
       payment_method: rec.payment, payment_note: rec.paymentNote,
+      pocket_id: rec.kind === 'expense' && rec.pocket !== '' ? Number(rec.pocket) : null,
     };
     try {
       const saved = rec.id ? await api('PUT', `/api/recurring/${rec.id}`, body) : await api('POST', '/api/recurring', body);
@@ -189,10 +193,7 @@
   <div class="page-title"><h1>Budget</h1><span class="muted">Kategorien, Abos &amp; Verträge</span></div>
 </header>
 
-<nav class="tabs" aria-label="Budget">
-  <a href="/budget">Übersicht</a>
-  <a class="active" href="/budget/kategorien" aria-current="page">Kategorien, Abos &amp; Verträge</a>
-</nav>
+<BudgetTabs />
 
 <div class="field-row" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; gap: 16px">
   <section class="card" aria-labelledby="cat-title">
@@ -203,7 +204,7 @@
     {#each categories.list as c (c.id)}
       <div class="list-row">
         <span class="dot" style="background: {c.color}; width: 12px; height: 12px"></span>
-        <div class="grow"><span>{c.name}</span><span class="small muted">{c.budget_cents ? `${money(c.budget_cents)} im Monat` : 'ohne Budget'}</span></div>
+        <div class="grow"><span>{c.name}</span><span class="small muted">{c.budget_cents ? `${money(c.budget_cents)} im Monat` : 'ohne Budget'}{c.pocket_id && pocketById[c.pocket_id] ? ` · Pocket ${pocketById[c.pocket_id].name}` : ''}</span></div>
         <div class="buttons"><button type="button" class="icon-button" aria-label="{c.name} bearbeiten" onclick={() => editCat(c)}><Icon name="pencil" /></button></div>
       </div>
     {:else}
@@ -225,7 +226,9 @@
           <span class="small muted">
             {intervalText(r)}{r.category_id && catById[r.category_id] ? ` · ${catById[r.category_id].name}` : ''}{r.ends_on ? ` · bis ${shortDate(r.ends_on, true)}` : ''}
           </span>
-          {#if r.payment_method}<span class="small muted">{paymentLabel(r.payment_method)}{r.payment_note ? ` · ${r.payment_note}` : ''}</span>{/if}
+          {#if r.payment_method || (r.pocket_id && pocketById[r.pocket_id])}
+            <span class="small muted">{[r.pocket_id && pocketById[r.pocket_id] ? `Pocket ${pocketById[r.pocket_id].name}` : '', paymentLabel(r.payment_method), r.payment_note].filter(Boolean).join(' · ')}</span>
+          {/if}
         </div>
         <div style="display: grid; text-align: right">
           <span class="mono" class:ok-text={r.kind === 'income'}>{r.kind === 'income' ? '+' : '−'}{money(r.amount_cents)}</span>
@@ -253,6 +256,14 @@
         <!-- svelte-ignore a11y_autofocus -->
         <label>Name<input name="name" required maxlength="100" autofocus bind:value={cat.name} /></label>
         <label>Monatsbudget in €<input name="budget" inputmode="decimal" placeholder="leer = kein Budget" bind:value={cat.budget} /></label>
+        {#if pockets.list.length}
+          <label>Bezahlt aus Pocket
+            <select name="pocket" bind:value={cat.pocket}>
+              <option value="">Kein Pocket</option>
+              {#each pockets.list as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+            </select>
+          </label>
+        {/if}
         <div class="form" style="gap: 4px">
           <span class="small" style="font-weight: 550">Farbe</span>
           <div class="weekdays" role="radiogroup" aria-label="Farbe">
@@ -293,12 +304,22 @@
             </select>
           </label>
         </div>
-        <label>Kategorie
-          <select name="category" bind:value={rec.category}>
-            <option value="">Ohne Kategorie</option>
-            {#each categories.list as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
-          </select>
-        </label>
+        <div class="field-row">
+          <label>Kategorie
+            <select name="category" bind:value={rec.category}>
+              <option value="">Ohne Kategorie</option>
+              {#each categories.list as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+            </select>
+          </label>
+          {#if rec.kind === 'expense' && pockets.list.length}
+            <label>Abgebucht von Pocket
+              <select name="pocket" bind:value={rec.pocket}>
+                <option value="">Kein Pocket</option>
+                {#each pockets.list as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+              </select>
+            </label>
+          {/if}
+        </div>
         <div class="field-row">
           <label>{rec.kind === 'income' ? 'Zahlungseingang' : 'Bezahlt per'}
             <select name="payment_method" bind:value={rec.payment}>

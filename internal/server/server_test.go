@@ -37,7 +37,7 @@ func testServer(t *testing.T) (*Server, *client) {
 	}
 	t.Cleanup(func() { database.Close() })
 	_, err = database.ExecContext(ctx, `SET FOREIGN_KEY_CHECKS = 0;
-		DROP TABLE IF EXISTS transactions, recurring, categories, event_exdates, events, tasks, settings, sessions, users, schema_migrations;
+		DROP TABLE IF EXISTS transactions, recurring, categories, pockets, event_exdates, events, tasks, settings, sessions, users, schema_migrations;
 		SET FOREIGN_KEY_CHECKS = 1;`)
 	if err != nil {
 		t.Fatal(err)
@@ -453,6 +453,77 @@ func TestContractLogoAndPayment(t *testing.T) {
 	c.do("GET", "/api/recurring", nil, 200, &list)
 	if list[0].LogoVersion != 0 {
 		t.Fatal("Logo nicht entfernt")
+	}
+}
+
+// Pockets: Summe = Gesamtbudget, Verträge und Kategorien je Pocket, Warnung bei zu wenig.
+func TestPockets(t *testing.T) {
+	_, c := testServer(t)
+	setup(c)
+	c.do("PUT", "/api/budget/total", map[string]any{"total_cents": 999999}, 200, nil) // wird von den Pockets abgelöst
+	var vers, haus db.Pocket
+	c.do("POST", "/api/pockets", map[string]any{"name": "Versicherungen", "color": "#2563eb", "monthly_cents": 4000}, 201, &vers)
+	c.do("POST", "/api/pockets", map[string]any{"name": "Haushalt", "monthly_cents": 60000}, 201, &haus)
+	c.do("POST", "/api/pockets", map[string]any{"name": "Haushalt"}, 409, nil)
+	c.do("PUT", "/api/budget/total", map[string]any{"total_cents": 100}, 409, nil)
+
+	var food db.Category
+	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel", "budget_cents": 40000, "pocket_id": haus.ID}, 201, &food)
+	c.do("POST", "/api/categories", map[string]any{"name": "X", "pocket_id": 999}, 400, nil)
+	// Versicherungen brauchen anteilig 20 € + 25 € = 45 €, drauf gehen nur 40 €
+	c.do("POST", "/api/recurring", map[string]any{"title": "Haftpflicht", "kind": "expense", "amount_cents": 24000, "day": 15,
+		"interval_months": 12, "starts_on": "2027-03-15", "pocket_id": vers.ID}, 201, nil)
+	c.do("POST", "/api/recurring", map[string]any{"title": "Hausrat", "kind": "expense", "amount_cents": 7500, "day": 1,
+		"interval_months": 3, "starts_on": "2026-10-01", "pocket_id": vers.ID}, 201, nil)
+	c.do("POST", "/api/recurring", map[string]any{"title": "Streaming", "kind": "expense", "amount_cents": 1299, "day": 5, "starts_on": "2026-10-05"}, 201, nil)
+	c.do("POST", "/api/recurring", map[string]any{"title": "X", "kind": "expense", "amount_cents": 1, "day": 1, "starts_on": "2026-10-05", "pocket_id": 999}, 400, nil)
+	c.do("POST", "/api/transactions", map[string]any{"kind": "expense", "amount_cents": 5000, "day": "2026-11-10", "category_id": food.ID}, 201, nil)
+
+	var b struct {
+		Plan    budgetPlan      `json:"plan"`
+		Pockets []pocketSummary `json:"pockets"`
+	}
+	// März 2027: Haftpflicht läuft, Hausrat auch
+	c.do("GET", "/api/budget?month=2027-03", nil, 200, &b)
+	if !b.Plan.FromPockets || b.Plan.TotalCents != 64000 || len(b.Pockets) != 3 {
+		t.Fatalf("Plan: %+v, Pockets %d", b.Plan, len(b.Pockets))
+	}
+	v := b.Pockets[1] // Reihenfolge wie angelegt: Versicherungen, Haushalt, Ohne Pocket
+	if v.Name != "Versicherungen" {
+		v = b.Pockets[0]
+	}
+	if v.ContractsCents != 4500 || v.Contracts != 2 || v.ShortCents != 500 || v.FreeCents != -500 {
+		t.Fatalf("Versicherungen: %+v", v)
+	}
+	// November 2026: Haushalt mit Lebensmittel-Ausgabe, Streaming ohne Pocket
+	c.do("GET", "/api/budget?month=2026-11", nil, 200, &b)
+	byName := map[string]pocketSummary{}
+	for _, p := range b.Pockets {
+		byName[p.Name] = p
+	}
+	h := byName["Haushalt"]
+	if h.SpentCents != 5000 || h.RemainingCents != 55000 || h.AllocatedCents != 40000 || h.ShortCents != 0 {
+		t.Fatalf("Haushalt: %+v", h)
+	}
+	if none := byName["Ohne Pocket"]; none.ContractsCents != 1299 || none.ShortCents != 0 {
+		t.Fatalf("ohne Pocket: %+v", none)
+	}
+	if byName["Versicherungen"].ShortCents != 0 { // Haftpflicht beginnt erst 2027
+		t.Fatalf("Versicherungen Nov.: %+v", byName["Versicherungen"])
+	}
+
+	// Pocket löschen: Vertrag und Kategorie bleiben, nur ohne Pocket
+	c.do("DELETE", fmt.Sprintf("/api/pockets/%d", haus.ID), nil, 204, nil)
+	var cats []db.Category
+	c.do("GET", "/api/categories", nil, 200, &cats)
+	if cats[0].PocketID != nil {
+		t.Fatal("Kategorie hängt noch am gelöschten Pocket")
+	}
+	// Alle Pockets weg: wieder das von Hand eingetragene Gesamtbudget
+	c.do("DELETE", fmt.Sprintf("/api/pockets/%d", vers.ID), nil, 204, nil)
+	c.do("GET", "/api/budget?month=2026-11", nil, 200, &b)
+	if b.Plan.FromPockets || b.Plan.TotalCents != 999999 {
+		t.Fatalf("ohne Pockets: %+v", b.Plan)
 	}
 }
 

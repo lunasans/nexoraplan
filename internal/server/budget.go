@@ -53,6 +53,7 @@ type budgetPlan struct {
 	ContractsCents int64 `json:"contracts_cents"` // Abos & Verträge (Ausgaben), anteilig
 	FreeCents      int64 `json:"free_cents"`      // frei planbar
 	AllocatedCents int64 `json:"allocated_cents"` // davon auf Kategorien verteilt
+	FromPockets    bool  `json:"from_pockets"`    // Gesamtbudget = Summe der Pockets
 }
 
 type contractShare struct {
@@ -60,16 +61,82 @@ type contractShare struct {
 	MonthlyCents int64 `json:"monthly_cents"`
 }
 
-func (s *Server) budgetTotal(ctx context.Context) (int64, error) {
+// budgetTotal: Gibt es Pockets, ist ihre Summe das Gesamtbudget (fromPockets),
+// sonst der von Hand eingetragene Betrag (0 = keiner).
+func (s *Server) budgetTotal(ctx context.Context) (total int64, pockets []db.Pocket, err error) {
+	if pockets, err = s.repo.Pockets(ctx); err != nil {
+		return 0, nil, err
+	}
+	if len(pockets) > 0 {
+		for _, p := range pockets {
+			total += p.MonthlyCents
+		}
+		return total, pockets, nil
+	}
 	raw, err := s.repo.Setting(ctx, db.SettingBudgetTotal)
 	if err != nil || raw == "" {
-		return 0, err
+		return 0, pockets, err
 	}
 	n, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || n < 0 {
-		return 0, nil
+		return 0, pockets, nil
 	}
-	return n, nil
+	return n, pockets, nil
+}
+
+// pocketSummary: ein Pocket im Monat. Drauf geht MonthlyCents; davon brauchen
+// die Abos/Verträge anteilig ContractsCents. Reicht das nicht, ist ShortCents > 0.
+type pocketSummary struct {
+	db.Pocket
+	ContractsCents int64 `json:"contracts_cents"` // Abos & Verträge anteilig
+	Contracts      int   `json:"contracts"`
+	FreeCents      int64 `json:"free_cents"`      // drauf − Verträge
+	SpentCents     int64 `json:"spent_cents"`     // Ausgaben in den Kategorien des Pockets (ohne Verträge)
+	RemainingCents int64 `json:"remaining_cents"` // frei − Ausgaben
+	ShortCents     int64 `json:"short_cents"`     // so viel fehlt monatlich für die Verträge
+	AllocatedCents int64 `json:"allocated_cents"` // Kategoriebudgets im Pocket
+}
+
+// pocketSummaries teilt Verträge und Ausgaben auf die Pockets auf. Der letzte
+// Eintrag (ID 0) sammelt, was keinem Pocket zugeordnet ist – nur wenn es etwas gibt.
+func pocketSummaries(pockets []db.Pocket, contracts []contractShare, cats []categorySummary) []pocketSummary {
+	out := make([]pocketSummary, 0, len(pockets)+1)
+	index := map[uint64]int{}
+	for _, p := range pockets {
+		index[p.ID] = len(out)
+		out = append(out, pocketSummary{Pocket: p})
+	}
+	none := pocketSummary{Pocket: db.Pocket{Name: "Ohne Pocket", Color: "#a8a5a0"}}
+	at := func(id *uint64) *pocketSummary {
+		if id != nil {
+			if i, ok := index[*id]; ok {
+				return &out[i]
+			}
+		}
+		return &none
+	}
+	for _, x := range contracts {
+		p := at(x.PocketID)
+		p.ContractsCents += x.MonthlyCents
+		p.Contracts++
+	}
+	for _, c := range cats {
+		p := at(c.PocketID)
+		p.SpentCents += c.SpentCents
+		p.AllocatedCents += c.BudgetCents
+	}
+	if none.Contracts > 0 || none.SpentCents > 0 {
+		out = append(out, none)
+	}
+	for i := range out {
+		p := &out[i]
+		p.FreeCents = p.MonthlyCents - p.ContractsCents
+		p.RemainingCents = p.FreeCents - p.SpentCents
+		if p.ID != 0 && p.ContractsCents > p.MonthlyCents {
+			p.ShortCents = p.ContractsCents - p.MonthlyCents
+		}
+	}
+	return out
 }
 
 // planFor rechnet den Plan für den Monat month (erster Tag, UTC).
@@ -110,6 +177,13 @@ func (s *Server) handleBudgetTotal(w http.ResponseWriter, r *http.Request) {
 		TotalCents int64 `json:"total_cents"`
 	}
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if pockets, err := s.repo.Pockets(r.Context()); err != nil {
+		internalError(w, r, err)
+		return
+	} else if len(pockets) > 0 {
+		writeError(w, http.StatusConflict, "Das Gesamtbudget ist die Summe deiner Pockets – ändere dort die monatlichen Beträge")
 		return
 	}
 	if req.TotalCents < 0 || req.TotalCents > maxCents {
@@ -154,12 +228,13 @@ func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	total, err := s.budgetTotal(ctx)
+	total, pockets, err := s.budgetTotal(ctx)
 	if err != nil {
 		internalError(w, r, err)
 		return
 	}
 	plan, contracts := planFor(total, recs, cats, month)
+	plan.FromPockets = len(pockets) > 0
 
 	summary := make([]categorySummary, len(cats))
 	index := map[uint64]int{}
@@ -208,6 +283,7 @@ func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
 		"variable_cents":      variable, // Ausgaben, die gegen den freien Teil zählen
 		"remaining_cents":     plan.FreeCents - variable,
 		"contracts":           contracts, // Abos & Verträge dieses Monats mit Monatsanteil
+		"pockets":             pocketSummaries(pockets, contracts, summary),
 		"categories":          summary,
 		"transactions":        txs,
 	})
@@ -224,7 +300,7 @@ func (s *Server) handleCategories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cats)
 }
 
-func readCategory(w http.ResponseWriter, r *http.Request) (db.Category, bool) {
+func (s *Server) readCategory(w http.ResponseWriter, r *http.Request) (db.Category, bool) {
 	var c db.Category
 	if !decodeJSON(w, r, &c) {
 		return c, false
@@ -242,13 +318,13 @@ func readCategory(w http.ResponseWriter, r *http.Request) (db.Category, bool) {
 	case c.BudgetCents < 0 || c.BudgetCents > maxCents:
 		writeError(w, http.StatusBadRequest, "Budget ungültig")
 	default:
-		return c, true
+		return c, s.checkPocket(w, r, c.PocketID)
 	}
 	return c, false
 }
 
 func (s *Server) handleCategoryCreate(w http.ResponseWriter, r *http.Request) {
-	c, ok := readCategory(w, r)
+	c, ok := s.readCategory(w, r)
 	if !ok {
 		return
 	}
@@ -269,7 +345,7 @@ func (s *Server) handleCategoryUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	c, ok := readCategory(w, r)
+	c, ok := s.readCategory(w, r)
 	if !ok {
 		return
 	}
@@ -420,6 +496,7 @@ func (s *Server) readRecurring(w http.ResponseWriter, r *http.Request) (db.Recur
 		Interval    int     `json:"interval_months"`
 		StartsOn    string  `json:"starts_on"`
 		EndsOn      *string `json:"ends_on"`
+		PocketID    *uint64 `json:"pocket_id"`
 		Payment     string  `json:"payment_method"`
 		PaymentNote string  `json:"payment_note"`
 	}
@@ -428,7 +505,7 @@ func (s *Server) readRecurring(w http.ResponseWriter, r *http.Request) (db.Recur
 	}
 	x := db.Recurring{Title: strings.TrimSpace(req.Title), Kind: req.Kind, AmountCents: req.AmountCents,
 		CategoryID: req.CategoryID, Day: req.Day, IntervalMonths: req.Interval, StartsOn: req.StartsOn, EndsOn: req.EndsOn,
-		PaymentMethod: req.Payment, PaymentNote: strings.TrimSpace(req.PaymentNote)}
+		PaymentMethod: req.Payment, PaymentNote: strings.TrimSpace(req.PaymentNote), PocketID: req.PocketID}
 	if x.IntervalMonths == 0 {
 		x.IntervalMonths = 1
 	}
@@ -454,7 +531,7 @@ func (s *Server) readRecurring(w http.ResponseWriter, r *http.Request) (db.Recur
 	case x.EndsOn != nil && (!validDate(*x.EndsOn) || *x.EndsOn < x.StartsOn):
 		writeError(w, http.StatusBadRequest, "Ende ungültig")
 	default:
-		return x, s.checkMoney(w, r, x.Kind, x.AmountCents, x.CategoryID)
+		return x, s.checkMoney(w, r, x.Kind, x.AmountCents, x.CategoryID) && s.checkPocket(w, r, x.PocketID)
 	}
 	return x, false
 }
