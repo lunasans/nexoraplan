@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"time"
@@ -132,8 +133,7 @@ func forecastPocket(p db.Pocket, recs []db.Recurring, cats map[uint64]bool, txs 
 }
 
 // forecastInputs lädt, was die Vorschau braucht.
-func (s *Server) forecastInputs(r *http.Request) ([]db.Recurring, []db.Category, []db.Transaction, error) {
-	ctx := r.Context()
+func (s *Server) forecastInputs(ctx context.Context) ([]db.Recurring, []db.Category, []db.Transaction, error) {
 	recs, err := s.repo.RecurringList(ctx)
 	if err != nil {
 		return nil, nil, nil, err
@@ -174,7 +174,7 @@ func (s *Server) handlePocketForecast(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Pocket nicht gefunden")
 		return
 	}
-	recs, cats, txs, err := s.forecastInputs(r)
+	recs, cats, txs, err := s.forecastInputs(r.Context())
 	if err != nil {
 		internalError(w, r, err)
 		return

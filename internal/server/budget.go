@@ -204,37 +204,45 @@ func (s *Server) handleBudgetTotal(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int64{"total_cents": req.TotalCents})
 }
 
-// GET /api/budget?month=2026-11 – Monatsübersicht mit allen Buchungen.
-func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
-	month, ok := s.monthParam(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "Monat ungültig")
-		return
-	}
-	ctx := r.Context()
+// budgetView ist die Monatsübersicht – für /api/budget und die Benachrichtigungen.
+type budgetView struct {
+	Month          string            `json:"month"`
+	Today          string            `json:"today"`
+	IncomeCents    int64             `json:"income_cents"`
+	ExpenseCents   int64             `json:"expense_cents"`
+	BalanceCents   int64             `json:"balance_cents"`
+	BudgetCents    int64             `json:"budget_cents"`
+	Uncategorized  int64             `json:"uncategorized_cents"`
+	Plan           budgetPlan        `json:"plan"`
+	VariableCents  int64             `json:"variable_cents"`  // Ausgaben, die gegen den freien Teil zählen
+	RemainingCents int64             `json:"remaining_cents"` // frei − Ausgaben
+	Contracts      []contractShare   `json:"contracts"`       // Abos & Verträge dieses Monats mit Monatsanteil
+	Pockets        []pocketSummary   `json:"pockets"`
+	Categories     []categorySummary `json:"categories"`
+	Transactions   []db.Transaction  `json:"transactions"`
+}
+
+// computeBudget rechnet die Übersicht für den Monat month (erster Tag, UTC).
+func (s *Server) computeBudget(ctx context.Context, month time.Time) (budgetView, error) {
+	var v budgetView
 	if err := s.bookRecurring(ctx); err != nil {
-		internalError(w, r, err)
-		return
+		return v, err
 	}
 	cats, err := s.repo.Categories(ctx)
 	if err != nil {
-		internalError(w, r, err)
-		return
+		return v, err
 	}
 	txs, err := s.repo.Transactions(ctx, month.Format(db.DateLayout), month.AddDate(0, 1, 0).Format(db.DateLayout))
 	if err != nil {
-		internalError(w, r, err)
-		return
+		return v, err
 	}
 	recs, err := s.repo.RecurringList(ctx)
 	if err != nil {
-		internalError(w, r, err)
-		return
+		return v, err
 	}
 	total, pockets, err := s.budgetTotal(ctx)
 	if err != nil {
-		internalError(w, r, err)
-		return
+		return v, err
 	}
 	plan, contracts := planFor(total, recs, cats, month)
 	plan.FromPockets = len(pockets) > 0
@@ -276,10 +284,9 @@ func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	ps := pocketSummaries(pockets, contracts, summary)
 	if slices.ContainsFunc(pockets, func(p db.Pocket) bool { return p.BalanceCents != nil }) {
-		frecs, fcats, ftxs, err := s.forecastInputs(r)
+		frecs, fcats, ftxs, err := s.forecastInputs(ctx)
 		if err != nil {
-			internalError(w, r, err)
-			return
+			return v, err
 		}
 		for i := range ps {
 			if ps[i].ID == 0 {
@@ -291,22 +298,28 @@ func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"month":               month.Format("2006-01"),
-		"today":               s.today().Format(db.DateLayout),
-		"income_cents":        income,
-		"expense_cents":       expenses,
-		"balance_cents":       income - expenses,
-		"budget_cents":        plan.AllocatedCents,
-		"uncategorized_cents": uncategorized,
-		"plan":                plan,
-		"variable_cents":      variable, // Ausgaben, die gegen den freien Teil zählen
-		"remaining_cents":     plan.FreeCents - variable,
-		"contracts":           contracts, // Abos & Verträge dieses Monats mit Monatsanteil
-		"pockets":             ps,
-		"categories":          summary,
-		"transactions":        txs,
-	})
+	return budgetView{
+		Month: month.Format("2006-01"), Today: s.today().Format(db.DateLayout),
+		IncomeCents: income, ExpenseCents: expenses, BalanceCents: income - expenses,
+		BudgetCents: plan.AllocatedCents, Uncategorized: uncategorized, Plan: plan,
+		VariableCents: variable, RemainingCents: plan.FreeCents - variable,
+		Contracts: contracts, Pockets: ps, Categories: summary, Transactions: txs,
+	}, nil
+}
+
+// GET /api/budget?month=2026-11 – Monatsübersicht mit allen Buchungen.
+func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
+	month, ok := s.monthParam(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Monat ungültig")
+		return
+	}
+	v, err := s.computeBudget(r.Context(), month)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
 }
 
 // --- Kategorien -------------------------------------------------------------

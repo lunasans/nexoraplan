@@ -18,6 +18,7 @@ import (
 	"nexoraplan/internal/db"
 	"nexoraplan/internal/secret"
 	"nexoraplan/internal/server"
+	"nexoraplan/internal/telegram"
 )
 
 func main() {
@@ -68,6 +69,11 @@ func run() error {
 		slog.Warn("PLAN_ENCRYPTION_KEY ist nicht gesetzt – ein Kalenderserver (SOGo) lässt sich nicht verbinden")
 	}
 
+	if cfg.TelegramAPI != "" {
+		telegram.API = cfg.TelegramAPI
+		slog.Warn("PLAN_TELEGRAM_API ist gesetzt – Telegram-Nachrichten gehen nicht an api.telegram.org", "adresse", cfg.TelegramAPI)
+	}
+
 	database, err := db.Open(ctx, cfg.DatabaseDSN)
 	if err != nil {
 		return err
@@ -88,6 +94,7 @@ func run() error {
 		return err
 	}
 	go app.RunJanitor(ctx)
+	go app.RunNotifier(ctx) // Telegram, nur wenn eingerichtet
 
 	ln, addr, err := listen(cfg.Addr)
 	if err != nil {

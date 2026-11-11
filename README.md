@@ -69,6 +69,18 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
   - Die Monatsübersicht zeigt Einnahmen, gebuchte Ausgaben und Saldo.
 - **In der Woche** steht der Anteil des freien Budgets, und auch über den Monatswechsel stimmt die Rechnung.
 
+**Telegram-Benachrichtigungen** (alles aus, bis du es einschaltest)
+- **Eigener Bot:** In Telegram @BotFather → `/newbot`, das Token unter Einstellungen → Telegram eintragen.
+  - Danach dem Bot „Starten“ schicken und „Verknüpfen“ tippen. Die App findet den Chat selbst.
+  - Das Token liegt verschlüsselt in der Datenbank (Schlüssel `PLAN_ENCRYPTION_KEY`).
+- **Einmal täglich zur eingestellten Uhrzeit** (Standard 07:00, nach einem Neustart am selben Tag nachgeholt), jede Nachricht einzeln:
+  - **Tagesübersicht:** Termine (eigene und SOGo), Aufgaben, heutige Abbuchungen, Rest im Budget.
+  - **Abbuchungen vorher:** 1, 3 oder 7 Tage vorher, mit Pocket und Zahlungsart.
+  - **Engpässe & Budget:** Engpass aus der Pocket-Vorschau, Pocket im Monat zu knapp, Monatsbudget oder Kategorie überschritten.
+    - Jedes Ereignis kommt nur einmal.
+    - Schlägt das Senden fehl, kommt es beim nächsten Mal.
+- **Ausgehende Firewall:** Ist sie im Panel gesperrt, muss `api.telegram.org` erlaubt sein.
+
 ## Projektstruktur
 
 | Pfad | Inhalt |
@@ -80,7 +92,8 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
 | `internal/recur/` | Serienregeln (RRULE nach RFC 5545) |
 | `internal/ical/` | iCalendar lesen und verlustfrei schreiben, Serien auflösen, VTIMEZONE |
 | `internal/caldav/` | CalDAV-Client (RFC 4791) für SOGo |
-| `internal/secret/` | Verschlüsselung des Kalender-Passworts |
+| `internal/secret/` | Verschlüsselung von Kalender-Passwort und Bot-Token |
+| `internal/telegram/` | Telegram Bot API (getMe, getUpdates, sendMessage) |
 | `frontend/` | Oberfläche (SvelteKit 3 / Svelte 5), gebaut nach `web/dist` |
 
 ## Lokal entwickeln
@@ -155,6 +168,10 @@ Alle Endpunkte außer `health`, `setup`, `login` und `logout` brauchen eine Sitz
 | PUT | `/api/budget/total` | Gesamtbudget pro Monat `{total_cents}`, 0 entfernt es (nur ohne Pockets) |
 | GET/POST, PUT/DELETE | `/api/pockets`, `/api/pockets/{id}` | Pockets `{name, color, monthly_cents, deposit_day, balance_cents, balance_on}`; Kategorien und Abos haben `pocket_id` |
 | GET | `/api/pockets/{id}/forecast` | Vorschau 12 Monate mit allen Posten und erstem Engpass |
+| GET/PUT | `/api/notifications` | Telegram-Stand und Einstellungen `{digest, payments, payment_days, alerts, time}` |
+| PUT/DELETE | `/api/notifications/telegram` | Bot-Token prüfen und speichern / Verbindung trennen |
+| POST | `/api/notifications/telegram/link` | Chat verknüpfen (nach „/start“ an den Bot) |
+| POST | `/api/notifications/send` | `{kind: digest\|payments\|alerts}` jetzt senden (zum Ausprobieren) |
 | GET/POST, PUT/DELETE | `/api/categories`, `/api/categories/{id}` | Kategorien |
 | POST, PUT/DELETE | `/api/transactions`, `/api/transactions/{id}` | Buchungen |
 | GET/POST, PUT/DELETE | `/api/recurring`, `/api/recurring/{id}` | Abos, Verträge, feste Einnahmen `{…, interval_months: 1\|3\|6\|12, payment_method, payment_note}` |

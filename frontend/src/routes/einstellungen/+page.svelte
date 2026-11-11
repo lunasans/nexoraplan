@@ -3,6 +3,7 @@
   import { api } from '#lib/api.js';
   import { calendars, handleError, loadCalendars, session, showToast } from '#lib/stores.svelte.js';
   import Icon from '#lib/components/Icon.svelte';
+  import TelegramSettings from '#lib/components/TelegramSettings.svelte';
 
   let dav = $state(null);
   let form = $state({ url: '', username: '', password: '' });
@@ -153,6 +154,8 @@
     {/each}
     <p class="card-body hint">Haken: in der Woche anzeigen. „Standard“: dort landen neue Termine.</p>
   </section>
+
+  <TelegramSettings />
 
   <section class="card" aria-labelledby="pw-title">
     <div class="card-head"><h2 id="pw-title">Passwort ändern</h2></div>

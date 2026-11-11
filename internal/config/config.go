@@ -23,6 +23,8 @@ type Config struct {
 	SetupCode string
 	// CalDAVURL ist der Vorschlag für die Kalender-Adresse (SOGo des Panels).
 	CalDAVURL string
+	// TelegramAPI: nur für Tests (Telegram-Nachbau), sonst https://api.telegram.org
+	TelegramAPI string
 }
 
 func Load() (Config, error) {
@@ -37,6 +39,7 @@ func Load() (Config, error) {
 		Timezone:      getenv("PLAN_TIMEZONE", "Europe/Berlin"),
 		SetupCode:     os.Getenv("PLAN_SETUP_CODE"),
 		CalDAVURL:     os.Getenv("PLAN_CALDAV_URL"),
+		TelegramAPI:   os.Getenv("PLAN_TELEGRAM_API"),
 	}, nil
 }
 

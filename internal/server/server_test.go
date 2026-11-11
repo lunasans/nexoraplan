@@ -37,7 +37,7 @@ func testServer(t *testing.T) (*Server, *client) {
 	}
 	t.Cleanup(func() { database.Close() })
 	_, err = database.ExecContext(ctx, `SET FOREIGN_KEY_CHECKS = 0;
-		DROP TABLE IF EXISTS transactions, recurring, categories, pockets, event_exdates, events, tasks, settings, sessions, users, schema_migrations;
+		DROP TABLE IF EXISTS notifications_sent, transactions, recurring, categories, pockets, event_exdates, events, tasks, settings, sessions, users, schema_migrations;
 		SET FOREIGN_KEY_CHECKS = 1;`)
 	if err != nil {
 		t.Fatal(err)

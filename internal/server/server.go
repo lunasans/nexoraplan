@@ -129,6 +129,13 @@ func New(repo *db.Repo, opts Options) (*Server, error) {
 			r.Put("/pockets/{id}", s.handlePocketUpdate)
 			r.Delete("/pockets/{id}", s.handlePocketDelete)
 			r.Get("/pockets/{id}/forecast", s.handlePocketForecast)
+
+			r.Get("/notifications", s.handleNotifyGet)
+			r.Put("/notifications", s.handleNotifyPut)
+			r.Post("/notifications/send", s.handleNotifySend)
+			r.Put("/notifications/telegram", s.handleTelegramToken)
+			r.Post("/notifications/telegram/link", s.handleTelegramLink)
+			r.Delete("/notifications/telegram", s.handleTelegramDelete)
 			r.Get("/categories", s.handleCategories)
 			r.Post("/categories", s.handleCategoryCreate)
 			r.Put("/categories/{id}", s.handleCategoryUpdate)
