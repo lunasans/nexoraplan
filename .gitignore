@@ -1,0 +1,5 @@
+/build/
+.env
+*.exe
+/web/dist/*
+!/web/dist/.gitkeep
