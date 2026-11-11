@@ -3,6 +3,7 @@
   import { api } from '#lib/api.js';
   import { moneyInput, parseMoney } from '#lib/format.js';
   import { categories, dialogs, handleError, loadCategories, showToast } from '#lib/stores.svelte.js';
+  import DateInput from './DateInput.svelte';
   import Icon from './Icon.svelte';
   import Modal from './Modal.svelte';
 
@@ -86,7 +87,7 @@
             <!-- svelte-ignore a11y_autofocus -->
             <input name="amount" inputmode="decimal" autocomplete="off" placeholder="0,00" autofocus={!form.id} bind:value={form.amount} />
           </label>
-          <label>Datum<input type="date" name="day" required bind:value={form.day} /></label>
+          <label>Datum<DateInput name="day" label="Datum" required bind:value={form.day} /></label>
         </div>
         <label>Kategorie
           <select name="category" bind:value={form.category}>

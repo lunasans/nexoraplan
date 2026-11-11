@@ -114,6 +114,11 @@ textarea { resize: vertical; min-height: 70px; }
 input[type="checkbox"], input[type="radio"] { width: 16px; min-height: 16px; height: 16px; padding: 0; accent-color: var(--ink); flex: none; }
 input[type="color"] { padding: 2px; width: 44px; }
 label { display: grid; gap: 4px; font-size: 13px; font-weight: 550; color: var(--text-2); }
+.date-input { position: relative; display: block; }
+.date-input input[type="text"] { padding-right: 36px; }
+.date-input .icon-button { position: absolute; top: 1px; right: 1px; height: calc(100% - 2px); min-height: 0; color: var(--muted); }
+/* Nur als Quelle für den Kalender des Browsers – sichtbar bleibt das Textfeld */
+.date-input .date-picker { position: absolute; left: 0; bottom: 0; width: 100%; height: 0; min-height: 0; padding: 0; border: 0; opacity: 0; pointer-events: none; }
 label.check { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .form { display: grid; gap: 12px; }

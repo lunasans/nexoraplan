@@ -3,6 +3,7 @@
   import { api } from '#lib/api.js';
   import { dayString, money, moneyInput, parseMoney, shortDate } from '#lib/format.js';
   import { categories, handleError, loadCategories, showToast } from '#lib/stores.svelte.js';
+  import DateInput from '#lib/components/DateInput.svelte';
   import Icon from '#lib/components/Icon.svelte';
   import Modal from '#lib/components/Modal.svelte';
 
@@ -227,8 +228,8 @@
           </select>
         </label>
         <div class="field-row">
-          <label>Ab<input name="starts_on" type="date" required bind:value={rec.starts_on} /></label>
-          <label>Bis (optional)<input name="ends_on" type="date" min={rec.starts_on} bind:value={rec.ends_on} /></label>
+          <label>Ab<DateInput name="starts_on" label="Ab" required bind:value={rec.starts_on} /></label>
+          <label>Bis (optional)<DateInput name="ends_on" label="Bis" min={rec.starts_on} bind:value={rec.ends_on} /></label>
         </div>
         {#if !rec.id}<p class="hint">Liegt der Beginn in der Vergangenheit, werden die fälligen Monate gleich gebucht.</p>{/if}
         {#if error}<p class="error">{error}</p>{/if}

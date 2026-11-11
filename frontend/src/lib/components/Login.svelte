@@ -43,7 +43,7 @@
     {#if setup}
       <label>Einrichtungscode
         <input type="text" name="setup_code" required autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX" bind:value={setupCode} />
-        <span class="hint">Steht im Log der App – im Panel unter Domain → Apps → Log.</span>
+        <span class="hint">Zeigt dir das Panel: Domain → Apps → nexora/plan, Kasten „Ersteinrichtung“.</span>
       </label>
     {/if}
     <label>E-Mail

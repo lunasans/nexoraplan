@@ -8,8 +8,10 @@
   import { addDays, lastDay, shortDate, wallDay, wallTime, weekdayShort } from '#lib/format.js';
   import { DAY_CODES, DAY_LABELS, buildRule, dayCode, describe, emptyRule, nthLabel, parseRule } from '#lib/rrule.js';
   import { calendars, dialogs, handleError, loadCalendars, showToast } from '#lib/stores.svelte.js';
+  import DateInput from './DateInput.svelte';
   import Icon from './Icon.svelte';
   import Modal from './Modal.svelte';
+  import TimeInput from './TimeInput.svelte';
 
   const d = $derived(dialogs.event);
   let form = $state(null);
@@ -75,18 +77,15 @@
   }
 
   // Beginn verschoben: Ende mitziehen, damit die Dauer gleich bleibt
-  function onStartDay(event) {
-    const old = form.startDay;
-    form.startDay = event.currentTarget.value;
-    if (!form.startDay || !old) return;
+  function onStartDay(day, old) {
+    if (!day || !old) return;
     const shift = Math.round((new Date(form.startDay) - new Date(old)) / 86400000);
     if (form.endDay) form.endDay = addDays(form.endDay, shift);
   }
 
-  function onStartTime(event) {
-    const [oh, om] = form.startTime.split(':').map(Number);
-    form.startTime = event.currentTarget.value;
-    const [nh, nm] = form.startTime.split(':').map(Number);
+  function onStartTime(time, old) {
+    const [oh, om] = old.split(':').map(Number);
+    const [nh, nm] = time.split(':').map(Number);
     if (form.startDay !== form.endDay || isNaN(nh)) return;
     const [eh, em] = form.endTime.split(':').map(Number);
     const end = Math.min(23 * 60 + 59, eh * 60 + em + (nh * 60 + nm) - (oh * 60 + om));
@@ -167,12 +166,12 @@
           </label>
           <label class="check"><input type="checkbox" name="all_day" bind:checked={form.all_day} />Ganztägig</label>
           <div class="field-row">
-            <label>Beginn<input type="date" name="start_day" required value={form.startDay} onchange={onStartDay} /></label>
-            {#if !form.all_day}<label>Uhrzeit<input type="time" name="start_time" required value={form.startTime} onchange={onStartTime} /></label>{/if}
+            <label>Beginn<DateInput name="start_day" label="Beginn" required bind:value={form.startDay} onchange={onStartDay} /></label>
+            {#if !form.all_day}<label>Uhrzeit<TimeInput name="start_time" label="Uhrzeit Beginn" required bind:value={form.startTime} onchange={onStartTime} /></label>{/if}
           </div>
           <div class="field-row">
-            <label>Ende<input type="date" name="end_day" required min={form.startDay} bind:value={form.endDay} /></label>
-            {#if !form.all_day}<label>Uhrzeit<input type="time" name="end_time" required bind:value={form.endTime} /></label>{/if}
+            <label>Ende<DateInput name="end_day" label="Ende" required min={form.startDay} bind:value={form.endDay} /></label>
+            {#if !form.all_day}<label>Uhrzeit<TimeInput name="end_time" label="Uhrzeit Ende" required bind:value={form.endTime} /></label>{/if}
           </div>
 
           <label>Wiederholen
@@ -216,7 +215,7 @@
                   <option value="count">Nach Anzahl</option>
                 </select>
               </label>
-              {#if rule.end === 'until'}<label>Letzter Tag<input type="date" required min={form.startDay} bind:value={rule.until} /></label>{/if}
+              {#if rule.end === 'until'}<label>Letzter Tag<DateInput label="Letzter Tag" required min={form.startDay} bind:value={rule.until} /></label>{/if}
               {#if rule.end === 'count'}<label>Anzahl<input type="number" min="1" max="999" required bind:value={rule.count} /></label>{/if}
             </div>
           {/if}

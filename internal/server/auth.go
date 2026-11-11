@@ -104,7 +104,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if subtle.ConstantTimeCompare([]byte(normalizeSetupCode(req.SetupCode)), []byte(normalizeSetupCode(s.setupCode))) != 1 {
 		s.limiter.fail(ip)
 		slog.Warn("Anmeldung fehlgeschlagen: falscher Einrichtungscode", "ip", ip)
-		writeError(w, http.StatusForbidden, "Der Einrichtungscode stimmt nicht. Er steht im Log des Dienstes (im Panel unter Apps → Log).")
+		writeError(w, http.StatusForbidden, "Der Einrichtungscode stimmt nicht. Das Panel zeigt ihn unter Domain → Apps → nexora/plan („Ersteinrichtung“).")
 		return
 	}
 	s.setupMu.Lock()
