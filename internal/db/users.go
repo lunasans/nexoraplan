@@ -92,6 +92,7 @@ const (
 	SettingCalDAVPassword = "caldav_password" // verschlüsselt (secret.Box)
 	SettingHiddenCals     = "caldav_hidden"   // JSON-Liste der ausgeblendeten Kalender
 	SettingDefaultCal     = "default_calendar"
+	SettingBudgetTotal    = "budget_total_cents" // Gesamtbudget pro Monat, "" = keins
 )
 
 // Setting liefert den Wert einer Einstellung; "" = nicht gesetzt.

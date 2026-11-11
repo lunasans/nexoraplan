@@ -267,6 +267,14 @@ label.check { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .tabs a { padding: 8px 12px; text-decoration: none; font-weight: 600; color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -1px; }
 .tabs a.active { color: var(--text); border-bottom-color: var(--signal); }
 
+.plan { padding: 6px 14px 14px; display: grid; gap: 2px; }
+.plan-row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
+.plan-row .mono { white-space: nowrap; }
+.plan-row.sum, .plan-row.total { border-top: 1px solid var(--line); font-weight: 650; }
+.plan-row.total { border-top: 2px solid var(--edge); font-size: 16px; }
+.plan-row .neg { color: var(--signal); }
+.plan .meter { margin: 6px 0 4px; }
+
 /* --- Dialoge ----------------------------------------------------------------- */
 
 dialog { padding: 0; border: 0; background: var(--surface); color: var(--text); box-shadow: var(--overlay); width: min(520px, calc(100vw - 24px)); max-height: calc(100vh - 24px); }

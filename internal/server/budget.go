@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -28,8 +30,92 @@ func (s *Server) monthParam(r *http.Request) (time.Time, bool) {
 
 type categorySummary struct {
 	db.Category
-	SpentCents  int64 `json:"spent_cents"`
-	IncomeCents int64 `json:"income_cents"`
+	SpentCents  int64 `json:"spent_cents"`  // Ausgaben ohne Abos/Verträge – zählen gegen das Kategoriebudget
+	FixedCents  int64 `json:"fixed_cents"`  // davon aus Abos/Verträgen gebucht
+	IncomeCents int64 `json:"income_cents"` // Einnahmen
+}
+
+// budgetPlan: Was im Monat für Einkäufe, Freizeit usw. frei ist.
+//
+// Mit Gesamtbudget: Gesamtbudget minus Abos & Verträge, anteilig umgerechnet
+// (240 € jährlich = 20 € je Monat). Ohne Gesamtbudget: Summe der Kategoriebudgets.
+type budgetPlan struct {
+	TotalCents     int64 `json:"total_cents"`     // Gesamtbudget pro Monat, 0 = keins
+	ContractsCents int64 `json:"contracts_cents"` // Abos & Verträge (Ausgaben), anteilig
+	FreeCents      int64 `json:"free_cents"`      // frei planbar
+	AllocatedCents int64 `json:"allocated_cents"` // davon auf Kategorien verteilt
+}
+
+type contractShare struct {
+	db.Recurring
+	MonthlyCents int64 `json:"monthly_cents"`
+}
+
+func (s *Server) budgetTotal(ctx context.Context) (int64, error) {
+	raw, err := s.repo.Setting(ctx, db.SettingBudgetTotal)
+	if err != nil || raw == "" {
+		return 0, err
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < 0 {
+		return 0, nil
+	}
+	return n, nil
+}
+
+// planFor rechnet den Plan für den Monat month (erster Tag, UTC).
+func planFor(total int64, recs []db.Recurring, cats []db.Category, month time.Time) (budgetPlan, []contractShare) {
+	p := budgetPlan{TotalCents: total}
+	contracts := []contractShare{}
+	for _, x := range recs {
+		if x.Kind != "expense" || !x.ActiveIn(month) {
+			continue
+		}
+		share := x.MonthlyShare()
+		p.ContractsCents += share
+		contracts = append(contracts, contractShare{Recurring: x, MonthlyCents: share})
+	}
+	for _, c := range cats {
+		p.AllocatedCents += c.BudgetCents
+	}
+	if total > 0 {
+		p.FreeCents = total - p.ContractsCents
+	} else {
+		p.FreeCents = p.AllocatedCents
+	}
+	return p, contracts
+}
+
+// countsAgainstBudget: Abos/Verträge sind im Plan schon anteilig abgezogen und
+// zählen nicht noch einmal. Ohne Gesamtbudget zählen nur Kategorien mit Budget.
+func countsAgainstBudget(t db.Transaction, total int64, budgeted map[uint64]bool) bool {
+	if t.Kind != "expense" || t.RecurringID != nil {
+		return false
+	}
+	return total > 0 || (t.CategoryID != nil && budgeted[*t.CategoryID])
+}
+
+// PUT /api/budget/total {"total_cents"} – Gesamtbudget pro Monat, 0 entfernt es.
+func (s *Server) handleBudgetTotal(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TotalCents int64 `json:"total_cents"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.TotalCents < 0 || req.TotalCents > maxCents {
+		writeError(w, http.StatusBadRequest, "Betrag ungültig")
+		return
+	}
+	value := ""
+	if req.TotalCents > 0 {
+		value = strconv.FormatInt(req.TotalCents, 10)
+	}
+	if err := s.repo.SetSettings(r.Context(), map[string]string{db.SettingBudgetTotal: value}); err != nil {
+		internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"total_cents": req.TotalCents})
 }
 
 // GET /api/budget?month=2026-11 – Monatsübersicht mit allen Buchungen.
@@ -54,33 +140,51 @@ func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
+	recs, err := s.repo.RecurringList(ctx)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	total, err := s.budgetTotal(ctx)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	plan, contracts := planFor(total, recs, cats, month)
+
 	summary := make([]categorySummary, len(cats))
 	index := map[uint64]int{}
-	var budget int64
+	budgeted := map[uint64]bool{}
 	for i, c := range cats {
 		summary[i] = categorySummary{Category: c}
 		index[c.ID] = i
-		budget += c.BudgetCents
+		budgeted[c.ID] = c.BudgetCents > 0
 	}
-	var income, expenses, uncategorized int64
+	var income, expenses, uncategorized, variable int64
 	for _, t := range txs {
 		if t.Kind == "income" {
 			income += t.AmountCents
 		} else {
 			expenses += t.AmountCents
 		}
-		if t.CategoryID == nil {
-			if t.Kind == "expense" {
-				uncategorized += t.AmountCents
-			}
-			continue
+		if countsAgainstBudget(t, total, budgeted) {
+			variable += t.AmountCents
 		}
-		if i, ok := index[*t.CategoryID]; ok {
-			if t.Kind == "income" {
+		i, ok := -1, false
+		if t.CategoryID != nil {
+			i, ok = index[*t.CategoryID]
+		}
+		switch {
+		case t.Kind == "income":
+			if ok {
 				summary[i].IncomeCents += t.AmountCents
-			} else {
-				summary[i].SpentCents += t.AmountCents
 			}
+		case !ok:
+			uncategorized += t.AmountCents
+		case t.RecurringID != nil:
+			summary[i].FixedCents += t.AmountCents
+		default:
+			summary[i].SpentCents += t.AmountCents
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -89,8 +193,12 @@ func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
 		"income_cents":        income,
 		"expense_cents":       expenses,
 		"balance_cents":       income - expenses,
-		"budget_cents":        budget,
+		"budget_cents":        plan.AllocatedCents,
 		"uncategorized_cents": uncategorized,
+		"plan":                plan,
+		"variable_cents":      variable, // Ausgaben, die gegen den freien Teil zählen
+		"remaining_cents":     plan.FreeCents - variable,
+		"contracts":           contracts, // Abos & Verträge dieses Monats mit Monatsanteil
 		"categories":          summary,
 		"transactions":        txs,
 	})
@@ -300,6 +408,7 @@ func (s *Server) readRecurring(w http.ResponseWriter, r *http.Request) (db.Recur
 		AmountCents int64   `json:"amount_cents"`
 		CategoryID  *uint64 `json:"category_id"`
 		Day         int     `json:"day"`
+		Interval    int     `json:"interval_months"`
 		StartsOn    string  `json:"starts_on"`
 		EndsOn      *string `json:"ends_on"`
 	}
@@ -307,13 +416,18 @@ func (s *Server) readRecurring(w http.ResponseWriter, r *http.Request) (db.Recur
 		return db.Recurring{}, false
 	}
 	x := db.Recurring{Title: strings.TrimSpace(req.Title), Kind: req.Kind, AmountCents: req.AmountCents,
-		CategoryID: req.CategoryID, Day: req.Day, StartsOn: req.StartsOn, EndsOn: req.EndsOn}
+		CategoryID: req.CategoryID, Day: req.Day, IntervalMonths: req.Interval, StartsOn: req.StartsOn, EndsOn: req.EndsOn}
+	if x.IntervalMonths == 0 {
+		x.IntervalMonths = 1
+	}
 	if x.EndsOn != nil && *x.EndsOn == "" {
 		x.EndsOn = nil
 	}
 	switch {
 	case x.Title == "" || utf8.RuneCountInString(x.Title) > 200:
 		writeError(w, http.StatusBadRequest, "Bitte eine Bezeichnung mit höchstens 200 Zeichen angeben")
+	case x.IntervalMonths != 1 && x.IntervalMonths != 3 && x.IntervalMonths != 6 && x.IntervalMonths != 12:
+		writeError(w, http.StatusBadRequest, "Abstand muss monatlich, vierteljährlich, halbjährlich oder jährlich sein")
 	case x.Day < 1 || x.Day > 31:
 		writeError(w, http.StatusBadRequest, "Tag muss zwischen 1 und 31 liegen")
 	case !validDate(x.StartsOn):

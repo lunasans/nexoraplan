@@ -30,9 +30,12 @@ type Recurring struct {
 	AmountCents int64   `json:"amount_cents"`
 	CategoryID  *uint64 `json:"category_id"`
 	Day         int     `json:"day"` // 1–31; fehlt der Tag im Monat, am letzten
-	StartsOn    string  `json:"starts_on"`
-	EndsOn      *string `json:"ends_on"`
-	BookedUntil *string `json:"booked_until"`
+	// IntervalMonths: 1 monatlich, 3 vierteljährlich, 6 halbjährlich, 12 jährlich –
+	// gebucht ab dem Monat von StartsOn
+	IntervalMonths int     `json:"interval_months"`
+	StartsOn       string  `json:"starts_on"`
+	EndsOn         *string `json:"ends_on"`
+	BookedUntil    *string `json:"booked_until"`
 }
 
 func nullID(n sql.NullInt64) *uint64 {
@@ -157,14 +160,14 @@ func (r *Repo) DeleteTransaction(ctx context.Context, id uint64) error {
 
 // --- Feste Buchungen --------------------------------------------------------
 
-const recColumns = `id, title, kind, amount_cents, category_id, day, starts_on, ends_on, booked_until`
+const recColumns = `id, title, kind, amount_cents, category_id, day, interval_months, starts_on, ends_on, booked_until`
 
 func scanRecurring(row scanner) (Recurring, error) {
 	var x Recurring
 	var cat sql.NullInt64
 	var starts time.Time
 	var ends, booked sql.NullTime
-	if err := row.Scan(&x.ID, &x.Title, &x.Kind, &x.AmountCents, &cat, &x.Day, &starts, &ends, &booked); err != nil {
+	if err := row.Scan(&x.ID, &x.Title, &x.Kind, &x.AmountCents, &cat, &x.Day, &x.IntervalMonths, &starts, &ends, &booked); err != nil {
 		return x, notFound(err)
 	}
 	x.CategoryID = nullID(cat)
@@ -196,8 +199,8 @@ func (r *Repo) RecurringByID(ctx context.Context, id uint64) (Recurring, error) 
 }
 
 func (r *Repo) CreateRecurring(ctx context.Context, x Recurring) (Recurring, error) {
-	res, err := r.db.ExecContext(ctx, `INSERT INTO recurring (title, kind, amount_cents, category_id, day, starts_on, ends_on)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, x.Title, x.Kind, x.AmountCents, x.CategoryID, x.Day, x.StartsOn, x.EndsOn)
+	res, err := r.db.ExecContext(ctx, `INSERT INTO recurring (title, kind, amount_cents, category_id, day, interval_months, starts_on, ends_on)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, x.Title, x.Kind, x.AmountCents, x.CategoryID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn)
 	if err != nil {
 		return x, err
 	}
@@ -208,15 +211,31 @@ func (r *Repo) CreateRecurring(ctx context.Context, x Recurring) (Recurring, err
 // UpdateRecurring ändert die Vorlage; bereits gebuchte Monate bleiben, wie sie sind.
 func (r *Repo) UpdateRecurring(ctx context.Context, x Recurring) error {
 	return affected(r.db.ExecContext(ctx, `UPDATE recurring SET title = ?, kind = ?, amount_cents = ?, category_id = ?, day = ?,
-		starts_on = ?, ends_on = ? WHERE id = ?`, x.Title, x.Kind, x.AmountCents, x.CategoryID, x.Day, x.StartsOn, x.EndsOn, x.ID))
+		interval_months = ?, starts_on = ?, ends_on = ? WHERE id = ?`,
+		x.Title, x.Kind, x.AmountCents, x.CategoryID, x.Day, x.IntervalMonths, x.StartsOn, x.EndsOn, x.ID))
+}
+
+// MonthlyShare: Anteil pro Monat (240 € jährlich = 20 €), auf Cent gerundet.
+func (x Recurring) MonthlyShare() int64 {
+	n := int64(max(x.IntervalMonths, 1))
+	return (x.AmountCents + n/2) / n
+}
+
+// ActiveIn: Läuft die feste Buchung im Monat month (erster Tag des Monats)?
+func (x Recurring) ActiveIn(month time.Time) bool {
+	if x.StartsOn >= month.AddDate(0, 1, 0).Format(DateLayout) {
+		return false
+	}
+	return x.EndsOn == nil || *x.EndsOn >= month.Format(DateLayout)
 }
 
 func (r *Repo) DeleteRecurring(ctx context.Context, id uint64) error {
 	return affected(r.db.ExecContext(ctx, `DELETE FROM recurring WHERE id = ?`, id))
 }
 
-// DueDays liefert die Buchungstage einer festen Buchung mit after < Tag <= until.
-// Fehlt der Tag im Monat (31. im April), wird am letzten Tag gebucht.
+// DueDays liefert die Buchungstage einer festen Buchung mit after < Tag <= until:
+// alle IntervalMonths Monate ab dem Monat von StartsOn. Fehlt der Tag im Monat
+// (31. im April), wird am letzten Tag gebucht.
 func DueDays(x Recurring, after, until time.Time) []time.Time {
 	start, err := time.Parse(DateLayout, x.StartsOn)
 	if err != nil {
@@ -227,7 +246,8 @@ func DueDays(x Recurring, after, until time.Time) []time.Time {
 		end, _ = time.Parse(DateLayout, *x.EndsOn)
 	}
 	var out []time.Time
-	for m := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.UTC); !m.After(until); m = m.AddDate(0, 1, 0) {
+	step := max(x.IntervalMonths, 1)
+	for m := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.UTC); !m.After(until); m = m.AddDate(0, step, 0) {
 		last := m.AddDate(0, 1, -1).Day()
 		day := time.Date(m.Year(), m.Month(), min(x.Day, last), 0, 0, 0, 0, time.UTC)
 		if day.Before(start) || !day.After(after) || day.After(until) || (!end.IsZero() && day.After(end)) {

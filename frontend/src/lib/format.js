@@ -96,3 +96,24 @@ export function eventTime(event, day) {
   if (ed === day && et !== '00:00') return `bis ${et}`;
   return 'ganztägig';
 }
+
+// Abstände von Abos und Verträgen (Monate)
+export const INTERVALS = [
+  { months: 1, label: 'Monatlich' },
+  { months: 3, label: 'Vierteljährlich' },
+  { months: 6, label: 'Halbjährlich' },
+  { months: 12, label: 'Jährlich' },
+];
+
+// intervalText: „monatlich am 5.“, „jährlich am 15.03.“, „vierteljährlich am 1. (Jan, Apr, Jul, Okt)“
+export function intervalText(r) {
+  const months = r.interval_months || 1;
+  const label = INTERVALS.find((i) => i.months === months)?.label.toLowerCase() ?? `alle ${months} Monate`;
+  const startMonth = Number(r.starts_on.slice(5, 7));
+  if (months === 12) return `${label} am ${String(r.day).padStart(2, '0')}.${String(startMonth).padStart(2, '0')}.`;
+  if (months === 1) return `${label} am ${r.day}.`;
+  const short = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+  const list = [];
+  for (let m = startMonth; list.length < 12 / months; m += months) list.push(short[(m - 1) % 12]);
+  return `${label} am ${r.day}. (${list.join(', ')})`;
+}

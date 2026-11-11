@@ -121,7 +121,7 @@
           {share > 1 ? `${money(week.budget.budgeted_cents - week.budget.planned_cents)} drüber` : `noch ${money(week.budget.planned_cents - week.budget.budgeted_cents)} übrig`}
         </span>
       {:else}
-        <span class="small muted">Monatsbudgets je Kategorie legst du unter <a href="/budget/kategorien">Budget → Kategorien</a> an.</span>
+        <span class="small muted">Lege unter <a href="/budget">Budget</a> ein Gesamtbudget pro Monat fest – die Woche zeigt dann ihren Anteil nach Abos &amp; Verträgen.</span>
       {/if}
     </section>
   </div>

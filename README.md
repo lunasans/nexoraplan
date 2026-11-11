@@ -15,8 +15,7 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
 **Woche**
 - Ansicht nach Kalenderwoche (`KW 46 · 09.11. – 15.11.2026`), Montag bis Sonntag, mit Blättern und „Heute“.
 - Pro Tag stehen dort Termine, Aufgaben und Ausgaben mit Tagessumme.
-- Ausgaben der Woche siehst du gegen das anteilige Monatsbudget, über den Monatswechsel richtig gerechnet.
-- Gegen das Budget zählen nur Kategorien, die ein Budget haben.
+- Ausgaben der Woche siehst du gegen ihren Anteil am frei verfügbaren Monatsbudget.
 
 **Aufgaben**
 - Je Kalenderwoche, entweder einem Tag zugeordnet oder für die ganze Woche.
@@ -41,11 +40,19 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
 - Zugangsdaten gehen nur an den eingestellten Host, auch bei Weiterleitungen oder fremden Adressen in Serverantworten.
 
 **Budget**
-- Kategorien mit Farbe und Monatsbudget, Buchungen (Ausgabe/Einnahme) mit Datum, Kategorie und Notiz.
-- Feste Buchungen (Miete, Gehalt, Abos) buchen jeden Monat am eingestellten Tag automatisch.
-  - Ist der Tag „31“, wird am Monatsletzten gebucht.
+- **Gesamtbudget pro Monat**, z. B. 2.000 €.
+  - Davon gehen Abos & Verträge **anteilig** ab: Ein Jahresvertrag über 240 € zählt jeden Monat mit 20 €.
+  - Der Rest ist frei für Einkäufe, Freizeit usw.
+  - Die Übersicht rechnet: Gesamtbudget − Abos & Verträge = frei verfügbar − Ausgaben = übrig.
+- **Abos, Verträge & feste Einnahmen** (Miete, Streaming, Versicherungen, Gehalt) sind monatlich, vierteljährlich, halbjährlich oder jährlich.
+  - Die App bucht sie automatisch am Fälligkeitstag. Fehlt der Tag in einem Monat (31.), bucht sie am Monatsletzten.
+  - Ihre echten Abbuchungen zählen nicht noch einmal gegen den freien Teil.
   - Eine von Hand gelöschte Buchung kommt nicht wieder.
-- Monatsübersicht mit Einnahmen, Ausgaben, Saldo, verbleibendem Budget und Balken je Kategorie.
+- **Kategorien** mit Farbe und optionalem Budget teilen den freien Teil auf.
+  - Ohne Gesamtbudget gilt die Summe der Kategoriebudgets.
+- **Buchungen** (Ausgabe/Einnahme) mit Datum, Kategorie und Notiz.
+  - Die Monatsübersicht zeigt Einnahmen, gebuchte Ausgaben und Saldo.
+- **In der Woche** steht der Anteil des freien Budgets, und auch über den Monatswechsel stimmt die Rechnung.
 
 ## Projektstruktur
 
@@ -129,7 +136,8 @@ Alle Endpunkte außer `health`, `setup`, `login` und `logout` brauchen eine Sitz
 | GET | `/api/calendars` | Kalender mit Sichtbarkeit, Standardkalender |
 | PUT | `/api/calendars/visibility`, `/api/calendars/default` | Kalender ein-/ausblenden, Standard setzen |
 | GET/PUT/DELETE | `/api/caldav` | Kalenderserver anzeigen / verbinden (prüft zuerst) / trennen |
-| GET | `/api/budget?month=2026-11` | Monatsübersicht |
+| GET | `/api/budget?month=2026-11` | Monatsübersicht mit Plan (Gesamtbudget, Abos & Verträge anteilig, frei, übrig) |
+| PUT | `/api/budget/total` | Gesamtbudget pro Monat `{total_cents}`, 0 entfernt es |
 | GET/POST, PUT/DELETE | `/api/categories`, `/api/categories/{id}` | Kategorien |
 | POST, PUT/DELETE | `/api/transactions`, `/api/transactions/{id}` | Buchungen |
-| GET/POST, PUT/DELETE | `/api/recurring`, `/api/recurring/{id}` | feste Buchungen |
+| GET/POST, PUT/DELETE | `/api/recurring`, `/api/recurring/{id}` | Abos, Verträge, feste Einnahmen `{…, interval_months: 1\|3\|6\|12}` |

@@ -72,12 +72,21 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	var monthly int64
+	recs, err := s.repo.RecurringList(ctx)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	total, err := s.budgetTotal(ctx)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
 	budgeted := map[uint64]bool{}
 	for _, c := range cats {
-		monthly += c.BudgetCents
 		budgeted[c.ID] = c.BudgetCents > 0
 	}
+	freeByMonth := map[time.Month]int64{}
 
 	days := make([]weekDay, 7)
 	index := map[string]int{}
@@ -87,9 +96,14 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		key := d.Format(db.DateLayout)
 		index[key] = i
 		days[i] = weekDay{Date: key, Events: []EventOut{}, Tasks: []db.Task{}, Transactions: []db.Transaction{}}
-		// Monatsbudget anteilig je Tag – eine Woche über den Monatswechsel rechnet beide Monate richtig.
+		// Frei planbares Budget anteilig je Tag (Gesamtbudget minus Abos/Verträge bzw. Summe der
+		// Kategoriebudgets) – eine Woche über den Monatswechsel rechnet beide Monate richtig.
 		daysInMonth := time.Date(d.Year(), d.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
-		planned += monthly / int64(daysInMonth)
+		if _, ok := freeByMonth[d.Month()]; !ok {
+			p, _ := planFor(total, recs, cats, time.Date(d.Year(), d.Month(), 1, 0, 0, 0, 0, time.UTC))
+			freeByMonth[d.Month()] = p.FreeCents
+		}
+		planned += freeByMonth[d.Month()] / int64(daysInMonth)
 	}
 	var openTasks []db.Task
 	weekTasks := []db.Task{}
@@ -121,8 +135,7 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		if t.Kind == "expense" {
 			days[i].SpentCents += t.AmountCents
 			spent += t.AmountCents
-			// Gegen das Budget zählen nur Kategorien mit Budget (Miete ohne Budget nicht)
-			if t.CategoryID != nil && budgeted[*t.CategoryID] {
+			if countsAgainstBudget(t, total, budgeted) {
 				spentBudgeted += t.AmountCents
 			}
 		} else {

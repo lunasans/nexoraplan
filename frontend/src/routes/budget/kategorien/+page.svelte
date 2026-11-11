@@ -1,7 +1,7 @@
-<!-- Kategorien mit Monatsbudget und feste Buchungen (Miete, Gehalt …) -->
+<!-- Kategorien mit Monatsbudget, Abos & Verträge (monatlich bis jährlich) und feste Einnahmen -->
 <script>
   import { api } from '#lib/api.js';
-  import { dayString, money, moneyInput, parseMoney, shortDate } from '#lib/format.js';
+  import { INTERVALS, dayString, intervalText, money, moneyInput, parseMoney, shortDate } from '#lib/format.js';
   import { categories, handleError, loadCategories, showToast } from '#lib/stores.svelte.js';
   import DateInput from '#lib/components/DateInput.svelte';
   import Icon from '#lib/components/Icon.svelte';
@@ -17,8 +17,10 @@
 
   const catById = $derived(Object.fromEntries(categories.list.map((c) => [c.id, c])));
   const totalBudget = $derived(categories.list.reduce((s, c) => s + c.budget_cents, 0));
-  const monthlyIncome = $derived(recurring.filter((r) => r.kind === 'income' && !ended(r)).reduce((s, r) => s + r.amount_cents, 0));
-  const monthlyFixed = $derived(recurring.filter((r) => r.kind === 'expense' && !ended(r)).reduce((s, r) => s + r.amount_cents, 0));
+  // Anteil pro Monat: 240 € jährlich = 20 €
+  const perMonth = (r) => Math.round(r.amount_cents / (r.interval_months || 1));
+  const monthlyIncome = $derived(recurring.filter((r) => r.kind === 'income' && !ended(r)).reduce((s, r) => s + perMonth(r), 0));
+  const monthlyFixed = $derived(recurring.filter((r) => r.kind === 'expense' && !ended(r)).reduce((s, r) => s + perMonth(r), 0));
 
   $effect(() => {
     loadCategories();
@@ -80,9 +82,16 @@
   function editRec(r) {
     error = '';
     const today = dayString(new Date());
-    rec = r
-      ? { id: r.id, title: r.title, kind: r.kind, amount: moneyInput(r.amount_cents), category: r.category_id ?? '', day: r.day, starts_on: r.starts_on, ends_on: r.ends_on ?? '' }
-      : { id: 0, title: '', kind: 'expense', amount: '', category: '', day: 1, starts_on: today.slice(0, 8) + '01', ends_on: '' };
+    if (!r) {
+      rec = { id: 0, title: '', kind: 'expense', amount: '', category: '', interval: 1, first: today, ends_on: '', day: 0 };
+      return;
+    }
+    // Erste Abbuchung = Monat von „starts_on“ am gebuchten Tag (31. im November = 30.)
+    const [y, m] = r.starts_on.split('-').map(Number);
+    const last = new Date(y, m, 0).getDate();
+    const first = `${r.starts_on.slice(0, 8)}${String(Math.min(r.day, last)).padStart(2, '0')}`;
+    rec = { id: r.id, title: r.title, kind: r.kind, amount: moneyInput(r.amount_cents), category: r.category_id ?? '',
+      interval: r.interval_months || 1, first, ends_on: r.ends_on ?? '', day: r.day, origFirst: first };
   }
 
   async function saveRec(event) {
@@ -95,12 +104,14 @@
     busy = true;
     const body = {
       title: rec.title, kind: rec.kind, amount_cents: cents, category_id: rec.category === '' ? null : Number(rec.category),
-      day: Number(rec.day), starts_on: rec.starts_on, ends_on: rec.ends_on || null,
+      interval_months: Number(rec.interval), starts_on: rec.first, ends_on: rec.ends_on || null,
+      // Unverändertes Datum behält z. B. „am 31.“ (Monatsletzter), auch wenn der erste Monat kürzer ist
+      day: rec.id && rec.first === rec.origFirst ? rec.day : Number(rec.first.slice(8)),
     };
     try {
       if (rec.id) await api('PUT', `/api/recurring/${rec.id}`, body);
       else await api('POST', '/api/recurring', body);
-      showToast(rec.id ? 'Feste Buchung gespeichert' : 'Feste Buchung angelegt – fällige Monate sind gebucht');
+      showToast(rec.id ? 'Gespeichert' : 'Angelegt – schon fällige Abbuchungen sind gebucht');
       rec = null;
       await loadRecurring();
     } catch (err) {
@@ -116,7 +127,7 @@
       await api('DELETE', `/api/recurring/${rec.id}`);
       rec = null;
       await loadRecurring();
-      showToast('Feste Buchung gelöscht');
+      showToast('Gelöscht');
     } catch (err) {
       handleError(err);
     }
@@ -124,12 +135,12 @@
 </script>
 
 <header class="page-head">
-  <div class="page-title"><h1>Budget</h1><span class="muted">Kategorien und feste Buchungen</span></div>
+  <div class="page-title"><h1>Budget</h1><span class="muted">Kategorien, Abos &amp; Verträge</span></div>
 </header>
 
 <nav class="tabs" aria-label="Budget">
   <a href="/budget">Übersicht</a>
-  <a class="active" href="/budget/kategorien" aria-current="page">Kategorien &amp; feste Buchungen</a>
+  <a class="active" href="/budget/kategorien" aria-current="page">Kategorien, Abos &amp; Verträge</a>
 </nav>
 
 <div class="field-row" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; gap: 16px">
@@ -152,25 +163,29 @@
 
   <section class="card" aria-labelledby="rec-title">
     <div class="card-head">
-      <h2 id="rec-title">Feste Buchungen</h2>
-      <button type="button" onclick={() => editRec(null)}><Icon name="plus" />Feste Buchung</button>
+      <h2 id="rec-title">Abos, Verträge &amp; feste Einnahmen</h2>
+      <button type="button" onclick={() => editRec(null)}><Icon name="plus" />Abo / Vertrag</button>
     </div>
     {#each recurring as r (r.id)}
       <div class="list-row" style:opacity={ended(r) ? 0.55 : 1}>
         <div class="grow">
           <span>{r.title}</span>
           <span class="small muted">
-            am {r.day}. jeden Monats{r.category_id && catById[r.category_id] ? ` · ${catById[r.category_id].name}` : ''}{r.ends_on ? ` · bis ${shortDate(r.ends_on, true)}` : ''}
+            {intervalText(r)}{r.category_id && catById[r.category_id] ? ` · ${catById[r.category_id].name}` : ''}{r.ends_on ? ` · bis ${shortDate(r.ends_on, true)}` : ''}
           </span>
         </div>
-        <span class="mono" class:ok-text={r.kind === 'income'}>{r.kind === 'income' ? '+' : '−'}{money(r.amount_cents)}</span>
+        <div style="display: grid; text-align: right">
+          <span class="mono" class:ok-text={r.kind === 'income'}>{r.kind === 'income' ? '+' : '−'}{money(r.amount_cents)}</span>
+          {#if (r.interval_months || 1) > 1}<span class="small muted mono">≈ {money(perMonth(r))} / Monat</span>{/if}
+        </div>
         <div class="buttons"><button type="button" class="icon-button" aria-label="{r.title} bearbeiten" onclick={() => editRec(r)}><Icon name="pencil" /></button></div>
       </div>
     {:else}
-      <p class="card-body empty">Miete, Gehalt, Abos: Feste Buchungen werden jeden Monat am eingestellten Tag automatisch gebucht.</p>
+      <p class="card-body empty">Miete, Streaming, Versicherungen, Gehalt: wird automatisch am Fälligkeitstag gebucht – monatlich, vierteljährlich, halbjährlich oder jährlich.
+        Ausgaben gehen anteilig vom Gesamtbudget ab.</p>
     {/each}
     {#if recurring.length}
-      <div class="list-row"><div class="grow"><span>Im Monat fest</span><span class="small muted">Einnahmen {money(monthlyIncome)} · Ausgaben {money(monthlyFixed)}</span></div>
+      <div class="list-row"><div class="grow"><span>Pro Monat (anteilig)</span><span class="small muted">Einnahmen {money(monthlyIncome)} · Abos &amp; Verträge {money(monthlyFixed)}</span></div>
         <span class="mono">{money(monthlyIncome - monthlyFixed)}</span></div>
     {/if}
   </section>
@@ -208,18 +223,21 @@
 <Modal open={!!rec} onclose={() => (rec = null)} id="rec-dialog" label="rec-dialog-title">
   {#if rec}
     <form class="form" onsubmit={saveRec} novalidate>
-      <div class="dialog-head"><h2 id="rec-dialog-title">{rec.id ? 'Feste Buchung bearbeiten' : 'Neue feste Buchung'}</h2></div>
+      <div class="dialog-head"><h2 id="rec-dialog-title">{rec.id ? (rec.kind === 'income' ? 'Feste Einnahme bearbeiten' : 'Abo / Vertrag bearbeiten') : rec.kind === 'income' ? 'Neue feste Einnahme' : 'Neues Abo / neuer Vertrag'}</h2></div>
       <div class="dialog-body">
         <div class="seg" role="group" aria-label="Art">
           <button type="button" class:on={rec.kind === 'expense'} aria-pressed={rec.kind === 'expense'} onclick={() => (rec.kind = 'expense')}>Ausgabe</button>
           <button type="button" class:on={rec.kind === 'income'} aria-pressed={rec.kind === 'income'} onclick={() => (rec.kind = 'income')}>Einnahme</button>
         </div>
         <!-- svelte-ignore a11y_autofocus -->
-        <label>Bezeichnung<input name="title" required maxlength="200" placeholder="z. B. Miete" autofocus bind:value={rec.title} /></label>
+        <label>Bezeichnung<input name="title" required maxlength="200" placeholder="z. B. Streaming, Haftpflicht, Miete" autofocus bind:value={rec.title} /></label>
         <div class="field-row">
           <label>Betrag in €<input name="amount" inputmode="decimal" placeholder="0,00" bind:value={rec.amount} /></label>
-          <label>Am Tag<input name="day" type="number" min="1" max="31" bind:value={rec.day} />
-            <span class="hint">31 = immer am Monatsletzten</span></label>
+          <label>Abstand
+            <select name="interval" bind:value={rec.interval}>
+              {#each INTERVALS as i (i.months)}<option value={i.months}>{i.label}</option>{/each}
+            </select>
+          </label>
         </div>
         <label>Kategorie
           <select name="category" bind:value={rec.category}>
@@ -228,10 +246,18 @@
           </select>
         </label>
         <div class="field-row">
-          <label>Ab<DateInput name="starts_on" label="Ab" required bind:value={rec.starts_on} /></label>
-          <label>Bis (optional)<DateInput name="ends_on" label="Bis" min={rec.starts_on} bind:value={rec.ends_on} /></label>
+          <label>{rec.id ? 'Erste Abbuchung' : 'Erste / nächste Abbuchung'}<DateInput name="starts_on" label="Erste Abbuchung" required bind:value={rec.first} /></label>
+          <label>Bis (optional)<DateInput name="ends_on" label="Bis" min={rec.first} bind:value={rec.ends_on} /></label>
         </div>
-        {#if !rec.id}<p class="hint">Liegt der Beginn in der Vergangenheit, werden die fälligen Monate gleich gebucht.</p>{/if}
+        {#if rec.first}
+          {@const parsed = parseMoney(rec.amount)}
+          <p class="hint">
+            {intervalText({ interval_months: Number(rec.interval), day: rec.id && rec.first === rec.origFirst ? rec.day : Number(rec.first.slice(8)), starts_on: rec.first })}
+            {#if parsed && Number(rec.interval) > 1} · ≈ {money(Math.round(parsed / Number(rec.interval)))} pro Monat{/if}.
+            Fehlt der Tag in einem Monat (31.), wird am Monatsletzten gebucht.
+            {#if !rec.id} Liegt das Datum in der Vergangenheit, werden die fälligen Abbuchungen gleich gebucht.{/if}
+          </p>
+        {/if}
         {#if error}<p class="error">{error}</p>{/if}
       </div>
       <div class="dialog-foot actions">

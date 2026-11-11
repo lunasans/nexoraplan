@@ -333,6 +333,65 @@ func TestBudget(t *testing.T) {
 		"starts_on": "2026-10-01", "ends_on": "2026-09-01"}, 400, nil)
 }
 
+// Gesamtbudget: Abos & Verträge gehen anteilig ab, der Rest ist frei.
+func TestBudgetTotal(t *testing.T) {
+	_, c := testServer(t)
+	setup(c)
+	var food db.Category
+	c.do("POST", "/api/categories", map[string]any{"name": "Lebensmittel", "budget_cents": 40000}, 201, &food)
+	c.do("PUT", "/api/budget/total", map[string]any{"total_cents": 200000}, 200, nil)
+	c.do("PUT", "/api/budget/total", map[string]any{"total_cents": -1}, 400, nil)
+
+	// monatlich 12,99 €, jährlich 240 € (im März), vierteljährlich 30 €, Gehalt zählt nicht
+	c.do("POST", "/api/recurring", map[string]any{"title": "Streaming", "kind": "expense", "amount_cents": 1299, "day": 5, "starts_on": "2026-10-05"}, 201, nil)
+	c.do("POST", "/api/recurring", map[string]any{"title": "Haftpflicht", "kind": "expense", "amount_cents": 24000, "day": 15, "interval_months": 12, "starts_on": "2026-03-15"}, 201, nil)
+	c.do("POST", "/api/recurring", map[string]any{"title": "Wasser", "kind": "expense", "amount_cents": 3000, "day": 1, "interval_months": 3, "starts_on": "2026-01-01"}, 201, nil)
+	c.do("POST", "/api/recurring", map[string]any{"title": "Gehalt", "kind": "income", "amount_cents": 300000, "day": 1, "starts_on": "2026-11-01"}, 201, nil)
+	c.do("POST", "/api/recurring", map[string]any{"title": "Falsch", "kind": "expense", "amount_cents": 100, "day": 1, "interval_months": 2, "starts_on": "2026-11-01"}, 400, nil)
+	c.do("POST", "/api/transactions", map[string]any{"kind": "expense", "amount_cents": 5000, "day": "2026-11-10", "category_id": food.ID}, 201, nil)
+
+	var b struct {
+		budgetResp
+		Plan      budgetPlan      `json:"plan"`
+		Variable  int64           `json:"variable_cents"`
+		Remaining int64           `json:"remaining_cents"`
+		Contracts []contractShare `json:"contracts"`
+	}
+	c.do("GET", "/api/budget?month=2026-11", nil, 200, &b)
+	wantContracts := int64(1299 + 2000 + 1000)
+	if b.Plan.TotalCents != 200000 || b.Plan.ContractsCents != wantContracts || b.Plan.FreeCents != 200000-wantContracts ||
+		b.Plan.AllocatedCents != 40000 || len(b.Contracts) != 3 {
+		t.Fatalf("Plan: %+v, Verträge %d", b.Plan, len(b.Contracts))
+	}
+	// Gebucht im November: Streaming (5.11.) – zählt nicht noch einmal gegen den freien Teil
+	if b.Variable != 5000 || b.Remaining != 200000-wantContracts-5000 || b.Expense != 1299+5000 {
+		t.Fatalf("Ausgaben: variabel %d, Rest %d, gesamt %d", b.Variable, b.Remaining, b.Expense)
+	}
+	if b.Categories[0].SpentCents != 5000 {
+		t.Fatalf("Kategorie: %+v", b.Categories[0])
+	}
+	// März: die Haftpflicht wurde wirklich gebucht (240 €), im Plan bleibt es bei 20 €
+	c.do("GET", "/api/budget?month=2026-03", nil, 200, &b)
+	// (Wasser vierteljährlich ab 01.01. ist im Januar, April, Juli, Oktober fällig – nicht im März)
+	if b.Expense != 24000 || b.Plan.ContractsCents != 2000+1000 || b.Variable != 0 {
+		t.Fatalf("März: gebucht %d, Plan %+v", b.Expense, b.Plan)
+	}
+
+	// Woche: frei planbar anteilig (November hat 30 Tage)
+	var w weekResp
+	c.do("GET", "/api/week?date=2026-11-11", nil, 200, &w)
+	if w.Budget.Planned != 7*((200000-wantContracts)/30) || w.Budget.Budgeted != 5000 {
+		t.Fatalf("Woche: geplant %d, gezählt %d", w.Budget.Planned, w.Budget.Budgeted)
+	}
+
+	// Gesamtbudget entfernen: wieder die Summe der Kategoriebudgets
+	c.do("PUT", "/api/budget/total", map[string]any{"total_cents": 0}, 200, nil)
+	c.do("GET", "/api/budget?month=2026-11", nil, 200, &b)
+	if b.Plan.TotalCents != 0 || b.Plan.FreeCents != 40000 {
+		t.Fatalf("ohne Gesamtbudget: %+v", b.Plan)
+	}
+}
+
 func TestCalDAVNeedsKey(t *testing.T) {
 	s, c := testServer(t)
 	setup(c)
