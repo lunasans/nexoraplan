@@ -3,9 +3,9 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '#lib/api.js';
-  import { addDays, eventTime, money, shortDate, weekdayShort } from '#lib/format.js';
+  import { addDays, eventTime, money, shortDate, txLabel, weekdayShort } from '#lib/format.js';
   import { describe } from '#lib/rrule.js';
-  import { categories, handleError, loadCalendars, loadCategories, openEvent, openTransaction, showToast } from '#lib/stores.svelte.js';
+  import { categories, handleError, loadCalendars, loadCategories, loadPockets, openEvent, openTransaction, pockets, showToast } from '#lib/stores.svelte.js';
   import Icon from '#lib/components/Icon.svelte';
   import TaskItem from '#lib/components/TaskItem.svelte';
 
@@ -15,6 +15,7 @@
 
   const date = $derived(page.url.searchParams.get('d') || '');
   const catById = $derived(Object.fromEntries(categories.list.map((c) => [c.id, c])));
+  const pocketById = $derived(Object.fromEntries(pockets.list.map((p) => [p.id, p])));
   const share = $derived(week && week.budget.planned_cents > 0 ? week.budget.budgeted_cents / week.budget.planned_cents : 0);
 
   $effect(() => {
@@ -23,6 +24,7 @@
   $effect(() => {
     loadCalendars();
     loadCategories();
+    loadPockets();
   });
 
   async function load(d = date) {
@@ -169,10 +171,11 @@
             <button type="button" class="add" aria-label="Ausgabe am {shortDate(day.date)}" onclick={() => openTransaction({ day: day.date }, reload)}><Icon name="plus" /></button>
           </div>
           {#each day.transactions as t (t.id)}
-            <button type="button" class="tx" class:income={t.kind === 'income'} onclick={() => openTransaction({ transaction: t }, reload)}>
+            <button type="button" class="tx" class:income={t.kind === 'income'} class:topup={t.kind === 'topup'} onclick={() => openTransaction({ transaction: t }, reload)}>
               {#if t.category_id && catById[t.category_id]}<span class="dot" style="background: {catById[t.category_id].color}"></span>{/if}
-              <span class="note">{t.note || catById[t.category_id]?.name || (t.kind === 'income' ? 'Einnahme' : 'Ausgabe')}</span>
-              <span class="amount">{t.kind === 'income' ? '+' : '−'}{money(t.amount_cents)}</span>
+              {#if t.kind === 'topup'}<span class="dot" style="background: {pocketById[t.pocket_id]?.color ?? 'var(--faint)'}"></span>{/if}
+              <span class="note">{txLabel(t, catById[t.category_id], (id) => pocketById[id]?.name)}</span>
+              <span class="amount">{t.kind === 'expense' ? '−' : '+'}{money(t.amount_cents)}</span>
             </button>
           {/each}
           {#if day.spent_cents}

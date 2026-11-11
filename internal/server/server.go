@@ -186,6 +186,13 @@ func (s *Server) bookRecurring(ctx context.Context) error {
 	if n > 0 {
 		slog.Info("Feste Buchungen gebucht", "anzahl", n)
 	}
+	if err != nil {
+		return err
+	}
+	n, err = s.repo.BookTopups(ctx, s.today())
+	if n > 0 {
+		slog.Info("Auffüllungen der Pockets gebucht", "anzahl", n)
+	}
 	return err
 }
 

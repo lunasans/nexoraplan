@@ -559,6 +559,65 @@ func TestPocketForecastAPI(t *testing.T) {
 	c.do("GET", fmt.Sprintf("/api/pockets/%d/forecast", p.ID), nil, 409, nil)
 }
 
+// Auffüllungen: als Buchung beim Pocket, aber nicht als Einnahme des Monats.
+func TestPocketTopups(t *testing.T) {
+	s, c := testServer(t) // heute: 11.11.2026
+	setup(c)
+	var p db.Pocket
+	c.do("POST", "/api/pockets", map[string]any{"name": "Jährlich", "monthly_cents": 5000, "deposit_day": 1}, 201, &p)
+	c.do("POST", "/api/recurring", map[string]any{"title": "Gehalt", "kind": "income", "amount_cents": 300000, "day": 1, "starts_on": "2026-11-01"}, 201, nil)
+	c.do("POST", "/api/transactions", map[string]any{"kind": "topup", "amount_cents": 100, "day": "2026-11-10"}, 400, nil)
+
+	var b struct {
+		budgetView
+	}
+	c.do("GET", "/api/budget?month=2026-11", nil, 200, &b)
+	if b.IncomeCents != 300000 || b.ExpenseCents != 0 || b.TopupCents != 5000 || b.Pockets[0].ToppedUpCents != 5000 {
+		t.Fatalf("November: Einnahmen %d, Ausgaben %d, umgebucht %d, Pocket %d", b.IncomeCents, b.ExpenseCents, b.TopupCents, b.Pockets[0].ToppedUpCents)
+	}
+	var topup db.Transaction
+	for _, tx := range b.Transactions {
+		if tx.Kind == "topup" {
+			topup = tx
+		}
+	}
+	if topup.Day != "2026-11-01" || topup.PocketID == nil || *topup.PocketID != p.ID {
+		t.Fatalf("Auffüllung: %+v", topup)
+	}
+	// Ändern: bleibt Auffüllung desselben Pockets, auch wenn „expense“ geschickt wird
+	var changed db.Transaction
+	c.do("PUT", fmt.Sprintf("/api/transactions/%d", topup.ID), map[string]any{"kind": "expense", "amount_cents": 6000, "day": "2026-11-02", "note": "mehr"}, 200, &changed)
+	if changed.Kind != "topup" || changed.AmountCents != 6000 || changed.PocketID == nil || *changed.PocketID != p.ID {
+		t.Fatalf("geändert: %+v", changed)
+	}
+	// Dezember wird gebucht, eine gelöschte Auffüllung kommt nicht wieder
+	berlin := s.loc
+	s.now = func() time.Time { return time.Date(2026, 12, 3, 9, 0, 0, 0, berlin) }
+	c.do("GET", "/api/budget?month=2026-12", nil, 200, &b)
+	if b.TopupCents != 5000 {
+		t.Fatalf("Dezember: %d", b.TopupCents)
+	}
+	for _, tx := range b.Transactions {
+		if tx.Kind == "topup" {
+			c.do("DELETE", fmt.Sprintf("/api/transactions/%d", tx.ID), nil, 204, nil)
+		}
+	}
+	c.do("GET", "/api/budget?month=2026-12", nil, 200, &b)
+	if b.TopupCents != 0 {
+		t.Fatal("gelöschte Auffüllung wieder gebucht")
+	}
+	// Woche: Auffüllung steht in der Liste, zählt aber nicht als Einnahme oder Ausgabe
+	s.now = func() time.Time { return time.Date(2027, 1, 2, 9, 0, 0, 0, berlin) }
+	// Sitzung (30 Tage) ist im Januar abgelaufen
+	c.do("POST", "/api/login", map[string]string{"email": "ich@example.de", "password": "geheim-genug-123"}, 200, nil)
+	var w weekResp
+	c.do("GET", "/api/week?date=2027-01-01", nil, 200, &w)
+	fri := w.Days[4] // Fr 01.01.2027
+	if fri.Date != "2027-01-01" || len(fri.Transactions) != 2 || fri.IncomeCents != 300000 || fri.SpentCents != 0 {
+		t.Fatalf("Woche: %+v", fri)
+	}
+}
+
 func TestCalDAVNeedsKey(t *testing.T) {
 	s, c := testServer(t)
 	setup(c)

@@ -141,3 +141,9 @@ export function parseSignedMoney(input) {
   const cents = parseMoney(s.replace(/^[-−]\s*/, ''));
   return cents === null ? null : negative ? -cents : cents;
 }
+
+// txLabel: Text einer Buchung in Listen. pocketName(id) liefert den Namen eines Pockets.
+export function txLabel(t, category, pocketName) {
+  if (t.kind === 'topup') return `Auffüllung ${pocketName?.(t.pocket_id) || 'Pocket'}${t.note ? ` · ${t.note}` : ''}`;
+  return t.note || category?.name || (t.kind === 'income' ? 'Einnahme' : 'Ausgabe');
+}

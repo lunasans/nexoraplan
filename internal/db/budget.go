@@ -27,11 +27,14 @@ type Pocket struct {
 }
 
 type Transaction struct {
-	ID          uint64  `json:"id"`
-	Kind        string  `json:"kind"` // expense | income
+	ID uint64 `json:"id"`
+	// Kind: expense | income | topup (Auffüllung eines Pockets – Einnahme des
+	// Pockets, für den Monat eine Umbuchung: weder Einnahme noch Ausgabe)
+	Kind        string  `json:"kind"`
 	AmountCents int64   `json:"amount_cents"`
 	Day         string  `json:"day"`
 	CategoryID  *uint64 `json:"category_id"`
+	PocketID    *uint64 `json:"pocket_id"` // nur bei Auffüllungen
 	Note        string  `json:"note"`
 	RecurringID *uint64 `json:"recurring_id"`
 }
@@ -116,6 +119,80 @@ func (r *Repo) DeleteCategory(ctx context.Context, id uint64) error {
 
 // --- Pockets ----------------------------------------------------------------
 
+// TopupDays: Tage der Auffüllung (am Tag depositDay, sonst am Monatsletzten)
+// mit after < Tag <= until, frühestens im Monat first.
+func TopupDays(depositDay int, first, after, until time.Time) []time.Time {
+	depositDay = min(max(depositDay, 1), 31)
+	var out []time.Time
+	for m := time.Date(first.Year(), first.Month(), 1, 0, 0, 0, 0, time.UTC); !m.After(until); m = m.AddDate(0, 1, 0) {
+		day := time.Date(m.Year(), m.Month(), min(depositDay, m.AddDate(0, 1, -1).Day()), 0, 0, 0, 0, time.UTC)
+		if day.After(after) && !day.After(until) {
+			out = append(out, day)
+		}
+	}
+	return out
+}
+
+// BookTopups bucht die monatlichen Auffüllungen der Pockets bis einschließlich
+// today – die erste im Monat, in dem das Pocket angelegt wurde. Wie bei festen
+// Buchungen merkt sich jedes Pocket, bis wann gebucht ist.
+func (r *Repo) BookTopups(ctx context.Context, today time.Time) (int, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id, monthly_cents, deposit_day, booked_until, created_at FROM pockets
+		WHERE booked_until IS NULL OR booked_until < ? FOR UPDATE`, dateString(today))
+	if err != nil {
+		return 0, err
+	}
+	type due struct {
+		id      uint64
+		monthly int64
+		day     int
+		after   time.Time
+		first   time.Time
+	}
+	var list []due
+	for rows.Next() {
+		var d due
+		var booked sql.NullTime
+		var created time.Time
+		if err := rows.Scan(&d.id, &d.monthly, &d.day, &booked, &created); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		d.first = created
+		if booked.Valid {
+			d.after = booked.Time
+		}
+		list = append(list, d)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, d := range list {
+		if d.monthly > 0 {
+			for _, day := range TopupDays(d.day, d.first, d.after, today) {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO transactions (kind, amount_cents, day, pocket_id, note)
+					VALUES ('topup', ?, ?, ?, '')`, d.monthly, dateString(day), d.id); err != nil {
+					return 0, err
+				}
+				n++
+			}
+		}
+		// Auch ohne Betrag weiterschieben – sonst würde ein später eingetragener
+		// Betrag rückwirkend bis zum Anlegen gebucht.
+		if _, err := tx.ExecContext(ctx, `UPDATE pockets SET booked_until = ? WHERE id = ?`, dateString(today), d.id); err != nil {
+			return 0, err
+		}
+	}
+	return n, tx.Commit()
+}
+
 func (r *Repo) Pockets(ctx context.Context) ([]Pocket, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT id, name, color, monthly_cents, balance_cents, balance_on, deposit_day
 		FROM pockets ORDER BY position, name`)
@@ -183,17 +260,18 @@ func (r *Repo) CategoryExists(ctx context.Context, id uint64) (bool, error) {
 
 // --- Buchungen --------------------------------------------------------------
 
-const txColumns = `id, kind, amount_cents, day, category_id, note, recurring_id`
+const txColumns = `id, kind, amount_cents, day, category_id, pocket_id, note, recurring_id`
 
 func scanTx(row scanner) (Transaction, error) {
 	var t Transaction
 	var day time.Time
-	var cat, rec sql.NullInt64
-	if err := row.Scan(&t.ID, &t.Kind, &t.AmountCents, &day, &cat, &t.Note, &rec); err != nil {
+	var cat, pocket, rec sql.NullInt64
+	if err := row.Scan(&t.ID, &t.Kind, &t.AmountCents, &day, &cat, &pocket, &t.Note, &rec); err != nil {
 		return t, notFound(err)
 	}
 	t.Day = dateString(day)
 	t.CategoryID = nullID(cat)
+	t.PocketID = nullID(pocket)
 	t.RecurringID = nullID(rec)
 	return t, nil
 }
@@ -222,8 +300,8 @@ func (r *Repo) Transaction(ctx context.Context, id uint64) (Transaction, error) 
 }
 
 func (r *Repo) CreateTransaction(ctx context.Context, t Transaction) (Transaction, error) {
-	res, err := r.db.ExecContext(ctx, `INSERT INTO transactions (kind, amount_cents, day, category_id, note, recurring_id)
-		VALUES (?, ?, ?, ?, ?, ?)`, t.Kind, t.AmountCents, t.Day, t.CategoryID, t.Note, t.RecurringID)
+	res, err := r.db.ExecContext(ctx, `INSERT INTO transactions (kind, amount_cents, day, category_id, pocket_id, note, recurring_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, t.Kind, t.AmountCents, t.Day, t.CategoryID, t.PocketID, t.Note, t.RecurringID)
 	if err != nil {
 		return t, err
 	}

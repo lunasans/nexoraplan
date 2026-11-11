@@ -98,6 +98,8 @@ type pocketSummary struct {
 	AllocatedCents int64 `json:"allocated_cents"` // Kategoriebudgets im Pocket
 	// Forecast: Vorschau (ohne Einzelposten), nur mit eingetragenem Stand
 	Forecast *pocketForecast `json:"forecast"`
+	// ToppedUpCents: in diesem Monat gebuchte Auffüllungen (Einnahme des Pockets)
+	ToppedUpCents int64 `json:"topped_up_cents"`
 }
 
 // pocketSummaries teilt Verträge und Ausgaben auf die Pockets auf. Der letzte
@@ -213,6 +215,7 @@ type budgetView struct {
 	BalanceCents   int64             `json:"balance_cents"`
 	BudgetCents    int64             `json:"budget_cents"`
 	Uncategorized  int64             `json:"uncategorized_cents"`
+	TopupCents     int64             `json:"topup_cents"` // auf Pockets umgebucht
 	Plan           budgetPlan        `json:"plan"`
 	VariableCents  int64             `json:"variable_cents"`  // Ausgaben, die gegen den freien Teil zählen
 	RemainingCents int64             `json:"remaining_cents"` // frei − Ausgaben
@@ -255,11 +258,19 @@ func (s *Server) computeBudget(ctx context.Context, month time.Time) (budgetView
 		index[c.ID] = i
 		budgeted[c.ID] = c.BudgetCents > 0
 	}
-	var income, expenses, uncategorized, variable int64
+	var income, expenses, uncategorized, variable, topups int64
+	toppedUp := map[uint64]int64{}
 	for _, t := range txs {
-		if t.Kind == "income" {
+		switch t.Kind {
+		case "topup": // Umbuchung aufs Pocket: zählt beim Pocket, nicht als Einnahme des Monats
+			topups += t.AmountCents
+			if t.PocketID != nil {
+				toppedUp[*t.PocketID] += t.AmountCents
+			}
+			continue
+		case "income":
 			income += t.AmountCents
-		} else {
+		default:
 			expenses += t.AmountCents
 		}
 		if countsAgainstBudget(t, total, budgeted) {
@@ -283,6 +294,9 @@ func (s *Server) computeBudget(ctx context.Context, month time.Time) (budgetView
 		}
 	}
 	ps := pocketSummaries(pockets, contracts, summary)
+	for i := range ps {
+		ps[i].ToppedUpCents = toppedUp[ps[i].ID]
+	}
 	if slices.ContainsFunc(pockets, func(p db.Pocket) bool { return p.BalanceCents != nil }) {
 		frecs, fcats, ftxs, err := s.forecastInputs(ctx)
 		if err != nil {
@@ -301,7 +315,7 @@ func (s *Server) computeBudget(ctx context.Context, month time.Time) (budgetView
 	return budgetView{
 		Month: month.Format("2006-01"), Today: s.today().Format(db.DateLayout),
 		IncomeCents: income, ExpenseCents: expenses, BalanceCents: income - expenses,
-		BudgetCents: plan.AllocatedCents, Uncategorized: uncategorized, Plan: plan,
+		BudgetCents: plan.AllocatedCents, Uncategorized: uncategorized, TopupCents: topups, Plan: plan,
 		VariableCents: variable, RemainingCents: plan.FreeCents - variable,
 		Contracts: contracts, Pockets: ps, Categories: summary, Transactions: txs,
 	}, nil
@@ -438,7 +452,8 @@ func validDate(s string) bool {
 	return err == nil && t.Year() >= 1970 && t.Year() <= 2200
 }
 
-func (s *Server) readTransaction(w http.ResponseWriter, r *http.Request) (db.Transaction, bool) {
+// topup: Auffüllung bearbeiten – Art und Kategorie zählen dann nicht.
+func (s *Server) readTransaction(w http.ResponseWriter, r *http.Request, topup bool) (db.Transaction, bool) {
 	var req struct {
 		Kind        string  `json:"kind"`
 		AmountCents int64   `json:"amount_cents"`
@@ -458,11 +473,14 @@ func (s *Server) readTransaction(w http.ResponseWriter, r *http.Request) (db.Tra
 		writeError(w, http.StatusBadRequest, "Die Notiz ist zu lang")
 		return t, false
 	}
+	if topup {
+		return t, s.checkMoney(w, r, "income", t.AmountCents, nil)
+	}
 	return t, s.checkMoney(w, r, t.Kind, t.AmountCents, t.CategoryID)
 }
 
 func (s *Server) handleTransactionCreate(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.readTransaction(w, r)
+	t, ok := s.readTransaction(w, r, false)
 	if !ok {
 		return
 	}
@@ -479,16 +497,24 @@ func (s *Server) handleTransactionUpdate(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	t, ok := s.readTransaction(w, r)
+	old, err := s.repo.Transaction(r.Context(), id)
+	if err != nil {
+		dbError(w, r, err, "Buchung")
+		return
+	}
+	t, ok := s.readTransaction(w, r, old.Kind == "topup")
 	if !ok {
 		return
 	}
 	t.ID = id
+	if old.Kind == "topup" { // Auffüllung bleibt Auffüllung desselben Pockets, ohne Kategorie
+		t.Kind, t.PocketID, t.CategoryID = "topup", old.PocketID, nil
+	}
 	if err := s.repo.UpdateTransaction(r.Context(), t); err != nil {
 		dbError(w, r, err, "Buchung")
 		return
 	}
-	t, err := s.repo.Transaction(r.Context(), id)
+	t, err = s.repo.Transaction(r.Context(), id)
 	if err != nil {
 		dbError(w, r, err, "Buchung")
 		return

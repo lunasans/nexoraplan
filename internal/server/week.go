@@ -132,13 +132,15 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		days[i].Transactions = append(days[i].Transactions, t)
-		if t.Kind == "expense" {
+		switch t.Kind {
+		case "topup": // Umbuchung aufs Pocket – weder Einnahme noch Ausgabe
+		case "expense":
 			days[i].SpentCents += t.AmountCents
 			spent += t.AmountCents
 			if countsAgainstBudget(t, total, budgeted) {
 				spentBudgeted += t.AmountCents
 			}
-		} else {
+		default:
 			days[i].IncomeCents += t.AmountCents
 		}
 	}

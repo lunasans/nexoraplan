@@ -42,6 +42,9 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
 **Budget**
 - **Pockets** sind Unterkonten, wie die Pockets der C24 Bank. Jedes hat einen Betrag, der monatlich draufgeht, und die **Summe ist das Gesamtbudget**.
   - Abos und Verträge werden von einem Pocket abgebucht, Kategorien gehören zu einem Pocket.
+  - **Auffüllungen werden gebucht:** am Tag des Dauerauftrags als „Auffüllung Pocket …“, ab dem Monat, in dem das Pocket angelegt wurde.
+    - Sie zählen als Einnahme des Pockets, im Monat aber als Umbuchung, also weder als Einnahme noch als Ausgabe. Das Gehalt zählt dadurch nicht doppelt.
+    - Gelöschte Auffüllungen kommen nicht wieder. Betrag und Tag einer Auffüllung lassen sich ändern.
   - Je Pocket rechnet die App: drauf − Abos & Verträge (anteilig) = frei − Ausgaben = übrig.
   - Reicht der Betrag nicht für die Verträge, warnt sie und nennt den fehlenden Betrag, z. B. „Dauerauftrag auf 920 € erhöhen“.
   - **Vorschau mit Stand (optional):** Stand und Datum eintragen, dazu den Tag des Dauerauftrags.

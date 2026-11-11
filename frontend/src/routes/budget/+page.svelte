@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '#lib/api.js';
-  import { addMonths, intervalText, money, monthTitle, parseMoney, paymentLabel, moneyInput, shortDate, weekdayShort } from '#lib/format.js';
+  import { addMonths, intervalText, money, monthTitle, parseMoney, paymentLabel, moneyInput, shortDate, txLabel, weekdayShort } from '#lib/format.js';
   import { categories, handleError, loadCategories, openTransaction, showToast } from '#lib/stores.svelte.js';
   import ContractLogo from '#lib/components/ContractLogo.svelte';
   import BudgetTabs from '#lib/components/BudgetTabs.svelte';
@@ -22,6 +22,8 @@
   });
   const plan = $derived(data?.plan);
   const contractById = $derived(Object.fromEntries((data?.contracts ?? []).map((x) => [x.id, x])));
+  const pocketById = $derived(Object.fromEntries((data?.pockets ?? []).filter((p) => p.id).map((p) => [p.id, p])));
+  const nPockets = $derived((data?.pockets ?? []).filter((p) => p.id).length);
   const used = $derived(plan && plan.free_cents > 0 ? data.variable_cents / plan.free_cents : 0);
   let editTotal = $state(null); // Eingabe beim Ändern des Gesamtbudgets
   let totalError = $state('');
@@ -134,7 +136,7 @@
     {#if plan.total_cents || plan.free_cents}
       <div class="plan">
         {#if plan.total_cents}
-          <div class="plan-row"><span>Gesamtbudget{#if plan.from_pockets} <span class="muted small">(Summe von {data.pockets.filter((p) => p.id).length} Pockets)</span>{/if}</span><span class="mono">{money(plan.total_cents)}</span></div>
+          <div class="plan-row"><span>Gesamtbudget{#if plan.from_pockets}&nbsp;<span class="muted small">(Summe {nPockets === 1 ? 'aus 1 Pocket' : `von ${nPockets} Pockets`})</span>{/if}</span><span class="mono">{money(plan.total_cents)}</span></div>
           <div class="plan-row minus"><span>Abos &amp; Verträge <span class="muted small">(anteilig, {data.contracts.length})</span></span><span class="mono">−{money(plan.contracts_cents)}</span></div>
           <div class="plan-row sum"><span>Frei verfügbar</span><span class="mono" class:neg={plan.free_cents < 0}>{money(plan.free_cents)}</span></div>
         {:else}
@@ -151,7 +153,8 @@
   </section>
 
   <div class="tiles">
-    <div class="tile"><span class="label">Einnahmen</span><span class="value pos">{money(data.income_cents)}</span></div>
+    <div class="tile"><span class="label">Einnahmen</span><span class="value pos">{money(data.income_cents)}</span>
+      {#if data.topup_cents}<span class="small muted">davon {money(data.topup_cents)} auf Pockets umgebucht</span>{/if}</div>
     <div class="tile"><span class="label">Ausgaben gebucht</span><span class="value">{money(data.expense_cents)}</span><span class="small muted">inkl. Abos &amp; Verträge</span></div>
     <div class="tile"><span class="label">Saldo</span><span class="value" class:neg={data.balance_cents < 0}>{money(data.balance_cents)}</span></div>
   </div>
@@ -203,10 +206,11 @@
           <div class="tx-day">{weekdayShort(g.day)} {shortDate(g.day)}</div>
           {#each g.items as t (t.id)}
             {@const c = catById[t.category_id]}
-            <button type="button" class="tx-row" class:income={t.kind === 'income'} onclick={() => openTransaction({ transaction: t }, reload)}>
-              <span class="note" style="display: flex; align-items: center; gap: 8px">{#if contractById[t.recurring_id]?.logo_version}<ContractLogo contract={contractById[t.recurring_id]} size={22} />{/if}{t.note || c?.name || (t.kind === 'income' ? 'Einnahme' : 'Ausgabe')}</span>
-              <span class="amount">{t.kind === 'income' ? '+' : '−'}{money(t.amount_cents)}</span>
+            <button type="button" class="tx-row" class:income={t.kind === 'income'} class:topup={t.kind === 'topup'} onclick={() => openTransaction({ transaction: t }, reload)}>
+              <span class="note" style="display: flex; align-items: center; gap: 8px">{#if contractById[t.recurring_id]?.logo_version}<ContractLogo contract={contractById[t.recurring_id]} size={22} />{/if}{txLabel(t, c, (id) => pocketById[id]?.name)}</span>
+              <span class="amount">{t.kind === 'expense' ? '−' : '+'}{money(t.amount_cents)}</span>
               <span class="meta">
+                {#if t.kind === 'topup'}<span class="dot" style="background: {pocketById[t.pocket_id]?.color ?? 'var(--faint)'}"></span>Umbuchung aufs Pocket{/if}
                 {#if c}<span class="dot" style="background: {c.color}"></span>{c.name}{/if}
                 {#if t.recurring_id}<span title="Abo / Vertrag"><Icon name="repeat" /></span>{/if}
               </span>

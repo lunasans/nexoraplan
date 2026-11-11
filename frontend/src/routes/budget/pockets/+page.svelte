@@ -159,6 +159,8 @@
         </div>
         <div class="plan">
           <div class="plan-row"><span>Monatlich drauf</span><span class="mono">{money(p.monthly_cents)}</span></div>
+          <div class="plan-row"><span>Aufgefüllt <span class="muted small">(Einnahme in {monthTitle(data.month).split(' ')[0]})</span></span>
+            <span class="mono" class:ok-text={p.topped_up_cents > 0}>+{money(p.topped_up_cents)}</span></div>
           {#if p.contracts}
             <div class="plan-row minus"><span>Abos &amp; Verträge <span class="muted small">({p.contracts}, anteilig)</span></span><span class="mono">−{money(p.contracts_cents)}</span></div>
             <div class="plan-row sum"><span>Frei</span><span class="mono" class:neg={p.free_cents < 0}>{money(p.free_cents)}</span></div>

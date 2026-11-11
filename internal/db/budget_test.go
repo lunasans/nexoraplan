@@ -62,3 +62,16 @@ func TestMonthlyShareAndActive(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+func TestTopupDays(t *testing.T) {
+	first := time.Date(2026, 11, 11, 15, 0, 0, 0, time.UTC) // Pocket am 11.11. angelegt
+	got := days(TopupDays(1, first, time.Time{}, time.Date(2027, 1, 15, 0, 0, 0, 0, time.UTC)))
+	// Die Auffüllung vom 01.11. zählt mit (Monat des Anlegens)
+	if len(got) != 3 || got[0] != "2026-11-01" || got[2] != "2027-01-01" {
+		t.Fatalf("Tag 1: %v", got)
+	}
+	got = days(TopupDays(31, first, time.Date(2026, 11, 30, 0, 0, 0, 0, time.UTC), time.Date(2027, 2, 28, 0, 0, 0, 0, time.UTC)))
+	if len(got) != 3 || got[0] != "2026-12-31" || got[2] != "2027-02-28" {
+		t.Fatalf("Tag 31 nach dem 30.11.: %v", got)
+	}
+}
