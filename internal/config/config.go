@@ -25,6 +25,10 @@ type Config struct {
 	CalDAVURL string
 	// TelegramAPI: nur für Tests (Telegram-Nachbau), sonst https://api.telegram.org
 	TelegramAPI string
+	// Anmeldung über nexora/auth (das Panel trägt die drei Werte beim Verbinden ein)
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
 }
 
 func Load() (Config, error) {
@@ -40,6 +44,10 @@ func Load() (Config, error) {
 		SetupCode:     os.Getenv("PLAN_SETUP_CODE"),
 		CalDAVURL:     os.Getenv("PLAN_CALDAV_URL"),
 		TelegramAPI:   os.Getenv("PLAN_TELEGRAM_API"),
+
+		OIDCIssuer:       os.Getenv("PLAN_OIDC_ISSUER"),
+		OIDCClientID:     os.Getenv("PLAN_OIDC_CLIENT_ID"),
+		OIDCClientSecret: os.Getenv("PLAN_OIDC_CLIENT_SECRET"),
 	}, nil
 }
 

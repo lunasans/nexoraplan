@@ -8,7 +8,8 @@
   let email = $state('');
   let password = $state('');
   let setupCode = $state('');
-  let error = $state('');
+  // Grund, falls die Anmeldung über nexora/auth abgelehnt wurde (Server leitet mit ?sso_error= zurück)
+  let error = $state(new URLSearchParams(location.search).get('sso_error') || '');
   let busy = $state(false);
 
   async function submit(event) {
@@ -56,5 +57,8 @@
     </label>
     {#if error}<p id="auth-error" class="error">{error}</p>{/if}
     <button type="submit" id="auth-submit" class="primary" disabled={busy}>{setup ? 'Konto anlegen' : 'Anmelden'}</button>
+    {#if session.sso && !setup}
+      <a id="auth-sso" class="button" href="/api/oidc/login" data-sveltekit-reload>Mit nexora/auth anmelden</a>
+    {/if}
   </form>
 </section>

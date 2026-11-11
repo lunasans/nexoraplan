@@ -11,6 +11,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -64,7 +65,57 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 		internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"needed": n == 0})
+	writeJSON(w, http.StatusOK, map[string]bool{"needed": n == 0, "sso": s.sso.Enabled()})
+}
+
+// GET /api/oidc/login – weiter zu nexora/auth.
+func (s *Server) handleSSOLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.sso.Enabled() {
+		writeError(w, http.StatusNotFound, "Anmeldung über nexora/auth ist nicht eingerichtet")
+		return
+	}
+	if err := s.sso.Start(w, r); err != nil {
+		s.ssoFailed(w, r, err)
+	}
+}
+
+// GET /api/oidc/callback – zurück von nexora/auth. Zugeordnet wird über die
+// bestätigte E-Mail-Adresse; ein Konto wird dabei nie neu angelegt.
+func (s *Server) handleSSOCallback(w http.ResponseWriter, r *http.Request) {
+	if !s.sso.Enabled() {
+		writeError(w, http.StatusNotFound, "Anmeldung über nexora/auth ist nicht eingerichtet")
+		return
+	}
+	id, err := s.sso.Finish(w, r)
+	if err != nil {
+		s.ssoFailed(w, r, err)
+		return
+	}
+	if !id.EmailVerified || id.Email == "" {
+		s.ssoFailed(w, r, errors.New("nexora/auth liefert keine bestätigte E-Mail-Adresse"))
+		return
+	}
+	u, err := s.repo.UserByEmail(r.Context(), id.Email)
+	if errors.Is(err, db.ErrNotFound) {
+		s.ssoFailed(w, r, errors.New("Kein Konto mit der Adresse "+id.Email))
+		return
+	}
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	if err := s.startSession(w, r, u); err != nil {
+		internalError(w, r, err)
+		return
+	}
+	slog.Info("Anmeldung über nexora/auth", "email", u.Email)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// ssoFailed zeigt den Grund auf der Anmeldeseite (?sso_error=…).
+func (s *Server) ssoFailed(w http.ResponseWriter, r *http.Request, err error) {
+	slog.Warn("Anmeldung über nexora/auth abgelehnt", "grund", err)
+	http.Redirect(w, r, "/?sso_error="+url.QueryEscape(err.Error()), http.StatusFound)
 }
 
 // newSetupCode erzeugt z. B. „K7QF-2MXA-PL4D-9TRE“.

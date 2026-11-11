@@ -25,7 +25,9 @@
         return;
       }
       try {
-        session.setupNeeded = (await api('GET', '/api/setup')).needed;
+        const setup = await api('GET', '/api/setup');
+        session.setupNeeded = setup.needed;
+        session.sso = !!setup.sso;
       } catch (e) {
         error = e.message;
         return;
