@@ -1,0 +1,100 @@
+# Prüft jeden Stand und baut den Release für NexoraPanel – ohne PowerShell,
+# also auch vom Handy aus:
+#   - Pull Request: nur prüfen (Oberfläche, go vet, Tests mit MariaDB)
+#   - Push auf main: prüfen und Release v<Datum> veröffentlichen
+#   - Von Hand: GitHub → Actions → „Release“ → „Run workflow“
+# Release-Dateien wie bei release.ps1 (Namen erwartet das Panel genau so):
+#   nexoraplan-linux-amd64, nexoraplan-linux-amd64.sha256
+name: Release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: test
+          MARIADB_DATABASE: nexoraplan_test
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      ASSET: nexoraplan-linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Version festlegen (Datum, zweiter Release am Tag = .2)
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(TZ=Europe/Berlin date +%Y.%m.%d)
+          last=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // ""' | sed 's/^v//')
+          if [ "$last" = "$v" ]; then
+            v="$v.2"
+          elif [ -n "$last" ] && [ "${last#"$v."}" != "$last" ]; then
+            v="$v.$(( ${last#"$v."} + 1 ))"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Version: $v"
+
+      - name: Oberfläche prüfen und bauen
+        working-directory: frontend
+        env:
+          PLAN_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          npm ci
+          npm run check
+          npm run build
+
+      - name: Go prüfen und testen
+        env:
+          PLAN_TEST_DSN: root:test@tcp(127.0.0.1:3306)/nexoraplan_test
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; echo "gofmt nötig"; exit 1; }
+          go vet ./...
+          go test ./...
+
+      - name: Linux-Binary bauen
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p build
+          go build -trimpath -ldflags "-s -w -X nexoraplan/internal/server.Version=${{ steps.version.outputs.version }}" -o "build/$ASSET" ./cmd/server
+          cd build && sha256sum "$ASSET" > "$ASSET.sha256" && cat "$ASSET.sha256"
+
+      - name: Release veröffentlichen
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" "build/$ASSET" "build/$ASSET.sha256" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "nexora/plan ${{ steps.version.outputs.version }}" --generate-notes
