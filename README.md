@@ -1,0 +1,132 @@
+# nexora/plan
+
+Wochenplaner mit Terminen und Budget, geschrieben in Go und Svelte, als App für
+NexoraPanel. Sie läuft als einzelne Binary hinter nginx; die Oberfläche ist in die
+Binary eingebettet.
+
+```
+Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexoraplan (systemd)
+                                                           │          │
+                                                       MariaDB     SOGo (CalDAV, optional)
+```
+
+## Was die App kann
+
+**Woche**
+- Ansicht nach Kalenderwoche (`KW 46 · 09.11. – 15.11.2026`), Montag bis Sonntag, mit Blättern und „Heute“.
+- Pro Tag stehen dort Termine, Aufgaben und Ausgaben mit Tagessumme.
+- Ausgaben der Woche siehst du gegen das anteilige Monatsbudget, über den Monatswechsel richtig gerechnet.
+- Gegen das Budget zählen nur Kategorien, die ein Budget haben.
+
+**Aufgaben**
+- Je Kalenderwoche, entweder einem Tag zugeordnet oder für die ganze Woche.
+- Abhaken, umbenennen, auf einen anderen Tag legen, löschen – direkt in der Zeile.
+- „Offene in KW 47“ schiebt alles Unerledigte in die nächste Woche. Montag bleibt dabei Montag.
+
+**Termine**
+- Eigene Termine, mit Uhrzeit oder ganztägig, auch über mehrere Tage.
+- Serien: täglich, wöchentlich (mit Wochentagen), monatlich (am 31. oder „am letzten Freitag“), jährlich. Jeweils mit Intervall und Ende nach Datum oder Anzahl.
+- Einzelne Vorkommen einer Serie lassen sich streichen.
+- Gerechnet wird in Wanduhrzeit: Ein Termin um 9:00 bleibt nach der Zeitumstellung um 9:00.
+
+**SOGo-Kalender** (oder jeder andere CalDAV-Server)
+- Einstellungen → „Kalender aus SOGo“: Adresse (das Panel trägt sie vor), Postfach und App-Passwort.
+  - Das Passwort liegt AES-256-GCM-verschlüsselt in der Datenbank, der Schlüssel nur in der Env-Datei.
+- Kalender werden automatisch gefunden (`current-user-principal` → `calendar-home-set`), samt Farben aus SOGo.
+  - Schreibgeschützte Kalender erkennt die App; Kalender lassen sich einzeln ausblenden.
+- Termine in SOGo lassen sich anlegen, ändern und löschen, Serien eingeschlossen.
+  - Gestrichene (`EXDATE`) und verschobene Einzeltermine (`RECURRENCE-ID`) werden richtig aufgelöst.
+- Beim Ändern bleibt erhalten, was die App nicht anfasst: Teilnehmer, Erinnerungen, Felder anderer Programme.
+  - Geschrieben wird nur, wenn der Termin seit dem Laden unverändert ist (ETag).
+- Zugangsdaten gehen nur an den eingestellten Host, auch bei Weiterleitungen oder fremden Adressen in Serverantworten.
+
+**Budget**
+- Kategorien mit Farbe und Monatsbudget, Buchungen (Ausgabe/Einnahme) mit Datum, Kategorie und Notiz.
+- Feste Buchungen (Miete, Gehalt, Abos) buchen jeden Monat am eingestellten Tag automatisch.
+  - Ist der Tag „31“, wird am Monatsletzten gebucht.
+  - Eine von Hand gelöschte Buchung kommt nicht wieder.
+- Monatsübersicht mit Einnahmen, Ausgaben, Saldo, verbleibendem Budget und Balken je Kategorie.
+
+## Projektstruktur
+
+| Pfad | Inhalt |
+|---|---|
+| `cmd/server/` | Einstiegspunkt, Socket-Aktivierung, Befehle `genkey`, `reset-password`, `version` |
+| `internal/config/` | Einstellungen aus Umgebungsvariablen (`PLAN_*`) bzw. `.env` |
+| `internal/db/` | MariaDB-Zugriff und Migrationen (`migrations/*.sql`) |
+| `internal/server/` | HTTP-Router, JSON-API, Anmeldung, Woche, Termine, Budget |
+| `internal/recur/` | Serienregeln (RRULE nach RFC 5545) |
+| `internal/ical/` | iCalendar lesen und verlustfrei schreiben, Serien auflösen, VTIMEZONE |
+| `internal/caldav/` | CalDAV-Client (RFC 4791) für SOGo |
+| `internal/secret/` | Verschlüsselung des Kalender-Passworts |
+| `frontend/` | Oberfläche (SvelteKit 3 / Svelte 5), gebaut nach `web/dist` |
+
+## Lokal entwickeln
+
+1. Go ≥ 1.26, Node.js ≥ 22 und eine MariaDB installieren.
+2. Datenbank anlegen und `.env.example` nach `.env` kopieren und ausfüllen.
+   - Den Schlüssel erzeugt `go run ./cmd/server genkey`.
+3. Oberfläche bauen:
+   ```bash
+   cd frontend && npm install && npm run build && cd ..
+   ```
+4. Starten: `go run ./cmd/server`, danach http://localhost:8090 öffnen.
+   - Den Einrichtungscode für das Konto schreibt die App ins Log.
+
+An der Oberfläche arbeiten: Bei laufendem Go-Server startet `npm run dev` (in `frontend`) einen
+Entwicklungsserver auf http://localhost:5173, der API-Anfragen an Port 8090 weiterreicht.
+
+**Prüfen**
+- Im Ordner `frontend`: `npm run check`.
+- Backend: `go test ./...`
+- Die Tests mit Datenbank laufen zusätzlich mit einer leeren Testdatenbank (sie wird dabei geleert):
+  ```bash
+  PLAN_TEST_DSN='plan:plan@unix(/run/mysqld/mysqld.sock)/nexoraplan_test' go test ./...
+  ```
+
+## Mit NexoraPanel installieren
+
+1. Release veröffentlichen: `.\release.ps1`.
+   - Das Skript baut Oberfläche und Linux-Binary und legt den GitHub-Release `v<Datum>` an (`nexoraplan-linux-amd64` + `.sha256`).
+2. Im Panel einmalig unter **Einstellungen → App-Quelle** das Repo `lunasans/nexoraplan` und ein Lese-Token eintragen.
+   - Das Token fein-granular anlegen, nur für dieses Repo, Berechtigung *Contents: Read*.
+3. Domain → Reiter **Apps** → nexora/plan → *Von GitHub installieren*.
+   - Das Panel legt Datenbank, Env-Datei mit Schlüssel und den Dienst `nexoraplan-<domain>` an.
+   - Ist SOGo eingerichtet, trägt es die Kalender-Adresse als Vorschlag ein.
+4. Beim ersten Aufruf den Einrichtungscode aus dem Log eingeben (Apps → Log).
+
+Updates: `.\release.ps1`, dann im Panel *Auf neueste Version aktualisieren*.
+
+**Passwort vergessen:** im Panel unter Apps → *Passwort zurücksetzen*. Oder als root:
+
+```bash
+/var/www/vhosts/<domain>/nexoraplan/nexoraplan reset-password -env /etc/nexora/apps/nexoraplan-<domain>.env <email>
+```
+
+## API
+
+Alle Endpunkte außer `health`, `setup`, `login` und `logout` brauchen eine Sitzung (Cookie
+`nexora_plan_session`). Änderungen nur mit `Content-Type: application/json`. Fehler kommen als
+`{"fehler": "..."}`. Tage stehen als `2026-11-11`, Zeitpunkte als RFC 3339 in der Zeitzone der App.
+
+| Methode | Pfad | Zweck |
+|---|---|---|
+| GET | `/api/health` | Status, Version, `setup_needed` |
+| GET/POST | `/api/setup` | Einrichtung nötig? / Konto anlegen `{email, password, setup_code}` |
+| POST | `/api/login`, `/api/logout` | An- und Abmelden |
+| GET | `/api/me` | angemeldetes Konto |
+| POST | `/api/password` | Passwort ändern, andere Sitzungen enden |
+| GET | `/api/week?date=` | Woche mit Terminen, Aufgaben, Buchungen und Budget |
+| POST | `/api/tasks` | Aufgabe `{week \| day, title}` |
+| PATCH/DELETE | `/api/tasks/{id}` | ändern `{title, done, day, clear_day}` / löschen |
+| POST | `/api/tasks/carry-over` | offene Aufgaben `{week}` in die nächste Woche |
+| GET | `/api/events?from=&to=` | Termine im Zeitraum; mit `?key=&calendar=` ein Termin (Serie: Hauptteil) |
+| POST/PUT | `/api/events` | Termin anlegen/ändern `{calendar, key, title, start, end, all_day, rrule, …}` |
+| POST | `/api/events/delete` | `{key, calendar, occurrence?}` – mit `occurrence` nur dieses Vorkommen |
+| GET | `/api/calendars` | Kalender mit Sichtbarkeit, Standardkalender |
+| PUT | `/api/calendars/visibility`, `/api/calendars/default` | Kalender ein-/ausblenden, Standard setzen |
+| GET/PUT/DELETE | `/api/caldav` | Kalenderserver anzeigen / verbinden (prüft zuerst) / trennen |
+| GET | `/api/budget?month=2026-11` | Monatsübersicht |
+| GET/POST, PUT/DELETE | `/api/categories`, `/api/categories/{id}` | Kategorien |
+| POST, PUT/DELETE | `/api/transactions`, `/api/transactions/{id}` | Buchungen |
+| GET/POST, PUT/DELETE | `/api/recurring`, `/api/recurring/{id}` | feste Buchungen |

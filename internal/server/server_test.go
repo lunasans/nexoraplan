@@ -136,7 +136,8 @@ type weekResp struct {
 	WeekTasks []db.Task `json:"week_tasks"`
 	Budget    struct {
 		Planned int64 `json:"planned_cents"`
-		Spent   int64 `json:"spent_cents"`
+		Spent    int64 `json:"spent_cents"`
+		Budgeted int64 `json:"budgeted_cents"`
 	} `json:"budget"`
 	CalendarError string `json:"calendar_error"`
 }
@@ -194,6 +195,15 @@ func TestLocalEvents(t *testing.T) {
 	c.do("POST", "/api/events", map[string]any{"calendar": "local", "title": "Urlaub", "all_day": true, "start": "2026-11-12", "end": "2026-11-13"}, 201, nil)
 	c.do("POST", "/api/events", map[string]any{"title": "Falsch", "start": "2026-11-12T10:00", "end": "2026-11-12T09:00"}, 400, nil)
 	c.do("POST", "/api/events", map[string]any{"title": "Falsch", "start": "2026-11-12T10:00", "end": "2026-11-12T11:00", "rrule": "FREQ=HOURLY"}, 400, nil)
+	// UNTIL als Datum wird bei Terminen mit Uhrzeit zum UTC-Zeitpunkt am Tagesende
+	var until map[string]string
+	c.do("POST", "/api/events", map[string]any{"title": "Kurs", "start": "2026-12-01T18:00", "end": "2026-12-01T19:00", "rrule": "FREQ=WEEKLY;UNTIL=20261215"}, 201, &until)
+	var kurs EventOut
+	c.do("GET", "/api/events?key="+until["key"], nil, 200, &kurs)
+	if kurs.RRule != "FREQ=WEEKLY;UNTIL=20261215T225959Z" {
+		t.Fatalf("UNTIL: %q", kurs.RRule)
+	}
+	c.do("POST", "/api/events/delete", map[string]any{"key": until["key"], "calendar": "local"}, 204, nil)
 
 	var ev eventsResp
 	c.do("GET", "/api/events?from=2026-11-01&to=2026-12-01", nil, 200, &ev)
@@ -309,7 +319,7 @@ func TestBudget(t *testing.T) {
 	var w weekResp
 	c.do("GET", "/api/week?date=2026-11-30", nil, 200, &w)
 	want := int64(30000/30 + 6*(30000/31))
-	if w.Budget.Planned != want || w.Budget.Spent != 90000 || w.Days[0].SpentCents != 90000 {
+	if w.Budget.Planned != want || w.Budget.Spent != 90000 || w.Budget.Budgeted != 0 || w.Days[0].SpentCents != 90000 {
 		t.Fatalf("Woche: geplant %d (erwartet %d), ausgegeben %d", w.Budget.Planned, want, w.Budget.Spent)
 	}
 

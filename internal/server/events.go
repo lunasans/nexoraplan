@@ -178,6 +178,11 @@ func (s *Server) parseEvent(req *eventRequest) (start, end time.Time, msg string
 		if err != nil {
 			return start, end, "Wiederholung ungültig: " + err.Error()
 		}
+		// UNTIL als Datum (aus dem Formular) gilt bis Tagesende. Bei Terminen mit
+		// Uhrzeit verlangt RFC 5545 einen UTC-Zeitpunkt.
+		if !req.AllDay {
+			rule.UntilDate = false
+		}
 		req.RRule = rule.String()
 	}
 	return start, end, ""

@@ -73,13 +73,15 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var monthly int64
+	budgeted := map[uint64]bool{}
 	for _, c := range cats {
 		monthly += c.BudgetCents
+		budgeted[c.ID] = c.BudgetCents > 0
 	}
 
 	days := make([]weekDay, 7)
 	index := map[string]int{}
-	var planned, spent int64
+	var planned, spent, spentBudgeted int64
 	for i := range days {
 		d := mon.AddDate(0, 0, i)
 		key := d.Format(db.DateLayout)
@@ -119,6 +121,10 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		if t.Kind == "expense" {
 			days[i].SpentCents += t.AmountCents
 			spent += t.AmountCents
+			// Gegen das Budget zählen nur Kategorien mit Budget (Miete ohne Budget nicht)
+			if t.CategoryID != nil && budgeted[*t.CategoryID] {
+				spentBudgeted += t.AmountCents
+			}
 		} else {
 			days[i].IncomeCents += t.AmountCents
 		}
@@ -133,7 +139,7 @@ func (s *Server) handleWeek(w http.ResponseWriter, r *http.Request) {
 		"days":           days,
 		"week_tasks":     weekTasks,
 		"open_tasks":     len(openTasks),
-		"budget":         map[string]int64{"planned_cents": planned, "spent_cents": spent},
+		"budget":         map[string]int64{"planned_cents": planned, "spent_cents": spent, "budgeted_cents": spentBudgeted},
 		"categories":     cats,
 		"calendar_error": errText(remoteErr),
 	})
