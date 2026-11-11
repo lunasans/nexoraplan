@@ -52,6 +52,15 @@ func (s *Server) readPocket(w http.ResponseWriter, r *http.Request) (db.Pocket, 
 		writeError(w, http.StatusBadRequest, "Stand ungültig")
 	case p.BalanceOn != nil && (!validDate(*p.BalanceOn) || *p.BalanceOn > s.today().Format(db.DateLayout)):
 		writeError(w, http.StatusBadRequest, "Das Datum des Stands darf nicht in der Zukunft liegen")
+	case p.IncomeID != nil:
+		ok, err := s.repo.IsIncome(r.Context(), *p.IncomeID)
+		if err != nil {
+			internalError(w, r, err)
+		} else if !ok {
+			writeError(w, http.StatusBadRequest, "Die Einnahme für den Einkommensverteiler gibt es nicht")
+		} else {
+			return p, true
+		}
 	default:
 		return p, true
 	}
@@ -85,7 +94,7 @@ func (s *Server) handlePocketUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ID = id
-	err := s.repo.UpdatePocket(r.Context(), p)
+	err := s.repo.UpdatePocket(r.Context(), p, s.today())
 	if errors.Is(err, db.ErrExists) {
 		writeError(w, http.StatusConflict, "Dieses Pocket gibt es schon")
 		return

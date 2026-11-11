@@ -23,6 +23,9 @@ type Pocket struct {
 	BalanceCents *int64  `json:"balance_cents"`
 	BalanceOn    *string `json:"balance_on"`
 	DepositDay   int     `json:"deposit_day"` // Tag, an dem der monatliche Betrag kommt (1–31)
+	// IncomeID: befüllt vom Einkommensverteiler mit dieser festen Einnahme (Gehalt) –
+	// dann zählt DepositDay nicht, die Auffüllung folgt der Gehaltsbuchung
+	IncomeID *uint64 `json:"income_id"`
 }
 
 type Transaction struct {
@@ -133,15 +136,19 @@ func TopupDays(depositDay int, first, after, until time.Time) []time.Time {
 }
 
 // BookTopups bucht die monatlichen Auffüllungen der Pockets bis einschließlich
-// today – die erste im Monat, in dem das Pocket angelegt wurde. Wie bei festen
+// today – frühestens im Monat, in dem das Pocket angelegt wurde. Wie bei festen
 // Buchungen merkt sich jedes Pocket, bis wann gebucht ist.
+//
+// Ist ein Pocket an eine Einnahme gekoppelt (Einkommensverteiler), folgt je
+// Gehaltsbuchung eine Auffüllung am selben Tag – höchstens eine je Monat.
+// Sonst am festen Tag (Dauerauftrag).
 func (r *Repo) BookTopups(ctx context.Context, today time.Time) (int, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id, monthly_cents, deposit_day, booked_until, created_at FROM pockets
+	rows, err := tx.QueryContext(ctx, `SELECT id, monthly_cents, deposit_day, income_id, booked_until, created_at FROM pockets
 		WHERE booked_until IS NULL OR booked_until < ? FOR UPDATE`, dateString(today))
 	if err != nil {
 		return 0, err
@@ -150,6 +157,7 @@ func (r *Repo) BookTopups(ctx context.Context, today time.Time) (int, error) {
 		id      uint64
 		monthly int64
 		day     int
+		income  sql.NullInt64
 		after   time.Time
 		first   time.Time
 	}
@@ -158,12 +166,13 @@ func (r *Repo) BookTopups(ctx context.Context, today time.Time) (int, error) {
 		var d due
 		var booked sql.NullTime
 		var created time.Time
-		if err := rows.Scan(&d.id, &d.monthly, &d.day, &booked, &created); err != nil {
+		if err := rows.Scan(&d.id, &d.monthly, &d.day, &d.income, &booked, &created); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		d.first = created
-		if booked.Valid {
+		d.first = time.Date(created.Year(), created.Month(), 1, 0, 0, 0, 0, time.UTC)
+		d.after = d.first.AddDate(0, 0, -1)
+		if booked.Valid && booked.Time.After(d.after) {
 			d.after = booked.Time
 		}
 		list = append(list, d)
@@ -174,7 +183,13 @@ func (r *Repo) BookTopups(ctx context.Context, today time.Time) (int, error) {
 	}
 	n := 0
 	for _, d := range list {
-		if d.monthly > 0 {
+		if d.monthly > 0 && d.income.Valid {
+			k, err := bookIncomeTopups(ctx, tx, d.id, d.monthly, uint64(d.income.Int64), d.after, today)
+			if err != nil {
+				return 0, err
+			}
+			n += k
+		} else if d.monthly > 0 {
 			for _, day := range TopupDays(d.day, d.first, d.after, today) {
 				if _, err := tx.ExecContext(ctx, `INSERT INTO transactions (kind, amount_cents, day, pocket_id, note)
 					VALUES ('topup', ?, ?, ?, '')`, d.monthly, dateString(day), d.id); err != nil {
@@ -192,8 +207,53 @@ func (r *Repo) BookTopups(ctx context.Context, today time.Time) (int, error) {
 	return n, tx.Commit()
 }
 
+// bookIncomeTopups: je Gehaltsbuchung (after < Tag <= until) eine Auffüllung am
+// selben Tag, wenn das Pocket in diesem Monat noch keine hat.
+func bookIncomeTopups(ctx context.Context, tx *sql.Tx, pocket uint64, monthly int64, income uint64, after, until time.Time) (int, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT s.id, s.day FROM transactions s
+		WHERE s.recurring_id = ? AND s.kind = 'income' AND s.day > ? AND s.day <= ?
+		AND NOT EXISTS (SELECT 1 FROM transactions t WHERE t.kind = 'topup' AND t.pocket_id = ?
+			AND YEAR(t.day) = YEAR(s.day) AND MONTH(t.day) = MONTH(s.day))
+		ORDER BY s.day`, income, dateString(after), dateString(until), pocket)
+	if err != nil {
+		return 0, err
+	}
+	type salary struct {
+		id  uint64
+		day time.Time
+	}
+	var list []salary
+	for rows.Next() {
+		var s salary
+		if err := rows.Scan(&s.id, &s.day); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		list = append(list, s)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	month := ""
+	n := 0
+	for _, s := range list {
+		if m := s.day.Format("2006-01"); m == month {
+			continue // zwei Gehaltsbuchungen im Monat: nur eine Auffüllung
+		} else {
+			month = m
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO transactions (kind, amount_cents, day, pocket_id, note, source_id)
+			VALUES ('topup', ?, ?, ?, '', ?)`, monthly, dateString(s.day), pocket, s.id); err != nil {
+			return 0, err
+		}
+		n++
+	}
+	return n, nil
+}
+
 func (r *Repo) Pockets(ctx context.Context) ([]Pocket, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, name, color, monthly_cents, balance_cents, balance_on, deposit_day
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name, color, monthly_cents, balance_cents, balance_on, deposit_day, income_id
 		FROM pockets ORDER BY position, name`)
 	if err != nil {
 		return nil, err
@@ -204,9 +264,11 @@ func (r *Repo) Pockets(ctx context.Context) ([]Pocket, error) {
 		var p Pocket
 		var balance sql.NullInt64
 		var on sql.NullTime
-		if err := rows.Scan(&p.ID, &p.Name, &p.Color, &p.MonthlyCents, &balance, &on, &p.DepositDay); err != nil {
+		var income sql.NullInt64
+		if err := rows.Scan(&p.ID, &p.Name, &p.Color, &p.MonthlyCents, &balance, &on, &p.DepositDay, &income); err != nil {
 			return nil, err
 		}
+		p.IncomeID = nullID(income)
 		if balance.Valid {
 			p.BalanceCents = &balance.Int64
 		}
@@ -217,9 +279,9 @@ func (r *Repo) Pockets(ctx context.Context) ([]Pocket, error) {
 }
 
 func (r *Repo) CreatePocket(ctx context.Context, p Pocket) (Pocket, error) {
-	res, err := r.db.ExecContext(ctx, `INSERT INTO pockets (name, color, monthly_cents, balance_cents, balance_on, deposit_day, position)
-		SELECT ?, ?, ?, ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM pockets`,
-		p.Name, p.Color, p.MonthlyCents, p.BalanceCents, p.BalanceOn, p.DepositDay)
+	res, err := r.db.ExecContext(ctx, `INSERT INTO pockets (name, color, monthly_cents, balance_cents, balance_on, deposit_day, income_id, position)
+		SELECT ?, ?, ?, ?, ?, ?, ?, COALESCE(MAX(position), 0) + 1 FROM pockets`,
+		p.Name, p.Color, p.MonthlyCents, p.BalanceCents, p.BalanceOn, p.DepositDay, p.IncomeID)
 	if isDuplicate(err) {
 		return p, ErrExists
 	}
@@ -231,9 +293,16 @@ func (r *Repo) CreatePocket(ctx context.Context, p Pocket) (Pocket, error) {
 	return p, nil
 }
 
-func (r *Repo) UpdatePocket(ctx context.Context, p Pocket) error {
-	res, err := r.db.ExecContext(ctx, `UPDATE pockets SET name = ?, color = ?, monthly_cents = ?, balance_cents = ?, balance_on = ?,
-		deposit_day = ? WHERE id = ?`, p.Name, p.Color, p.MonthlyCents, p.BalanceCents, p.BalanceOn, p.DepositDay, p.ID)
+// today: heutiges Datum der App (für das Neu-Ansehen bei geänderter Kopplung).
+func (r *Repo) UpdatePocket(ctx context.Context, p Pocket, today time.Time) error {
+	// Neu an eine Einnahme gekoppelt: die Gehaltsbuchungen dieses Monats noch
+	// einmal ansehen (booked_until vor der Kopplung neu setzen – MySQL wertet
+	// SET von links nach rechts aus); doppelt gebucht wird nicht, je Monat höchstens eine.
+	res, err := r.db.ExecContext(ctx, `UPDATE pockets SET
+		booked_until = IF(? IS NOT NULL AND NOT (income_id <=> ?), LAST_DAY(? - INTERVAL 1 MONTH), booked_until),
+		name = ?, color = ?, monthly_cents = ?, balance_cents = ?, balance_on = ?, deposit_day = ?, income_id = ? WHERE id = ?`,
+		p.IncomeID, p.IncomeID, dateString(today),
+		p.Name, p.Color, p.MonthlyCents, p.BalanceCents, p.BalanceOn, p.DepositDay, p.IncomeID, p.ID)
 	if isDuplicate(err) {
 		return ErrExists
 	}
@@ -243,6 +312,13 @@ func (r *Repo) UpdatePocket(ctx context.Context, p Pocket) error {
 // DeletePocket: Abos/Verträge und Kategorien bleiben, nur ohne Pocket.
 func (r *Repo) DeletePocket(ctx context.Context, id uint64) error {
 	return affected(r.db.ExecContext(ctx, `DELETE FROM pockets WHERE id = ?`, id))
+}
+
+// IsIncome: Gibt es eine feste Einnahme mit dieser ID?
+func (r *Repo) IsIncome(ctx context.Context, id uint64) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM recurring WHERE id = ? AND kind = 'income'`, id).Scan(&n)
+	return n > 0, err
 }
 
 func (r *Repo) PocketExists(ctx context.Context, id uint64) (bool, error) {
@@ -309,8 +385,13 @@ func (r *Repo) CreateTransaction(ctx context.Context, t Transaction) (Transactio
 }
 
 func (r *Repo) UpdateTransaction(ctx context.Context, t Transaction) error {
-	return affected(r.db.ExecContext(ctx, `UPDATE transactions SET kind = ?, amount_cents = ?, day = ?, category_id = ?, note = ?
-		WHERE id = ?`, t.Kind, t.AmountCents, t.Day, t.CategoryID, t.Note, t.ID))
+	if err := affected(r.db.ExecContext(ctx, `UPDATE transactions SET kind = ?, amount_cents = ?, day = ?, category_id = ?, note = ?
+		WHERE id = ?`, t.Kind, t.AmountCents, t.Day, t.CategoryID, t.Note, t.ID)); err != nil {
+		return err
+	}
+	// Gehalt verschoben: die Auffüllungen des Einkommensverteilers ziehen mit
+	_, err := r.db.ExecContext(ctx, `UPDATE transactions SET day = ? WHERE source_id = ?`, t.Day, t.ID)
+	return err
 }
 
 func (r *Repo) DeleteTransaction(ctx context.Context, id uint64) error {

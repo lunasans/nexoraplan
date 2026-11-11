@@ -57,7 +57,18 @@ func forecastPocket(p db.Pocket, recs []db.Recurring, cats map[uint64]bool, txs 
 		events = append(events, forecastEvent{Day: day.Format(db.DateLayout), Title: title, Kind: kind, AmountCents: amount})
 	}
 
-	if p.MonthlyCents > 0 {
+	var income *db.Recurring
+	if p.IncomeID != nil {
+		if i := slices.IndexFunc(recs, func(x db.Recurring) bool { return x.ID == *p.IncomeID }); i >= 0 {
+			income = &recs[i]
+		}
+	}
+	if p.MonthlyCents > 0 && income != nil {
+		// Einkommensverteiler: Auffüllung an jedem Gehaltstag
+		for _, day := range db.DueDays(*income, start, until) {
+			add(day, "Auffüllung aus "+income.Title, "deposit", p.MonthlyCents)
+		}
+	} else if p.MonthlyCents > 0 {
 		depositDay := min(max(p.DepositDay, 1), 31)
 		for m := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.UTC); !m.After(until); m = m.AddDate(0, 1, 0) {
 			day := time.Date(m.Year(), m.Month(), min(depositDay, m.AddDate(0, 1, -1).Day()), 0, 0, 0, 0, time.UTC)

@@ -21,6 +21,8 @@
   let error = $state('');
   let busy = $state(false);
   let details = $state({}); // Pocket-ID → Vorschau mit allen Posten (aufgeklappt)
+  let incomes = $state([]); // feste Einnahmen (Gehalt) für den Einkommensverteiler
+  const incomeById = $derived(Object.fromEntries(incomes.map((x) => [x.id, x])));
   const month = $derived(page.url.searchParams.get('m') || '');
   const real = $derived((data?.pockets ?? []).filter((p) => p.id));
   const none = $derived((data?.pockets ?? []).find((p) => !p.id));
@@ -32,7 +34,9 @@
 
   async function load(m = month) {
     try {
-      data = await api('GET', `/api/budget${m ? `?month=${m}` : ''}`);
+      const [b, recs] = await Promise.all([api('GET', `/api/budget${m ? `?month=${m}` : ''}`), api('GET', '/api/recurring')]);
+      data = b;
+      incomes = recs.filter((x) => x.kind === 'income');
     } catch (err) {
       handleError(err);
     }
@@ -48,8 +52,9 @@
     edit = p
       ? { id: p.id, name: p.name, color: p.color, monthly: moneyInput(p.monthly_cents), depositDay: p.deposit_day || 1,
           balance: p.balance_cents === null ? '' : (p.balance_cents < 0 ? '-' : '') + (moneyInput(Math.abs(p.balance_cents)) || '0,00'),
-          balanceOn: p.balance_on || today }
-      : { id: 0, name: '', color: COLORS[real.length % COLORS.length], monthly: '', depositDay: 1, balance: '', balanceOn: today };
+          balanceOn: p.balance_on || today, income: p.income_id ?? '' }
+      : { id: 0, name: '', color: COLORS[real.length % COLORS.length], monthly: '', depositDay: 1, balance: '', balanceOn: today,
+          income: incomes.length === 1 ? incomes[0].id : '' };
   }
 
   async function save(event) {
@@ -70,6 +75,7 @@
     busy = true;
     const body = {
       name: edit.name, color: edit.color, monthly_cents: cents, deposit_day: Number(edit.depositDay) || 1,
+      income_id: edit.income === '' ? null : Number(edit.income),
       balance_cents: balance, balance_on: balance === null ? null : edit.balanceOn,
     };
     try {
@@ -155,6 +161,7 @@
       <section class="card pocket" style="border-top: 4px solid {p.color}" aria-label="Pocket {p.name}">
         <div class="card-head">
           <h2>{p.name}</h2>
+          {#if p.income_id && incomeById[p.income_id]}<span class="small muted">aus {incomeById[p.income_id].title}</span>{/if}
           <button type="button" class="icon-button ghost" aria-label="{p.name} bearbeiten" onclick={() => open(p)}><Icon name="pencil" /></button>
         </div>
         <div class="plan">
@@ -238,11 +245,25 @@
       <div class="dialog-body">
         <!-- svelte-ignore a11y_autofocus -->
         <label>Name<input name="name" required maxlength="100" placeholder="z. B. Versicherungen, Haushalt" autofocus bind:value={edit.name} /></label>
+        <label>Befüllt durch
+          <select name="income" bind:value={edit.income}>
+            {#each incomes as x (x.id)}<option value={x.id}>Einkommensverteiler: mit „{x.title}“</option>{/each}
+            <option value="">Dauerauftrag an einem festen Tag</option>
+          </select>
+        </label>
         <div class="field-row">
           <label>Monatlich drauf in €<input name="monthly" inputmode="decimal" placeholder="z. B. 50,00" bind:value={edit.monthly} /></label>
-          <label>Kommt am Tag<input name="deposit_day" type="number" min="1" max="31" bind:value={edit.depositDay} /></label>
+          {#if edit.income === ''}<label>Kommt am Tag<input name="deposit_day" type="number" min="1" max="31" bind:value={edit.depositDay} /></label>{/if}
         </div>
-        <span class="hint">Was jeden Monat auf das Pocket geht, z. B. per Dauerauftrag, und an welchem Tag.</span>
+        <span class="hint">
+          {#if edit.income !== ''}
+            Wie in der C24-App eingestellt: Sobald „{incomeById[edit.income]?.title}“ gebucht ist, bucht nexora/plan am selben Tag die Auffüllung –
+            verschiebst du die Gehaltsbuchung, zieht sie mit.
+          {:else}
+            Was jeden Monat auf das Pocket geht, z. B. per Dauerauftrag, und an welchem Tag.
+            {#if !incomes.length}Für den Einkommensverteiler zuerst das Gehalt als feste Einnahme anlegen.{/if}
+          {/if}
+        </span>
         <div class="field-row">
           <label>Aktueller Stand in € (optional)<input name="balance" inputmode="decimal" placeholder="z. B. 120,00" bind:value={edit.balance} /></label>
           <label>Stand vom<DateInput name="balance_on" label="Stand vom" bind:value={edit.balanceOn} /></label>
