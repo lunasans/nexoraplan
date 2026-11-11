@@ -45,6 +45,11 @@ Browser ──HTTPS──▶ nginx (NexoraPanel) ──Unix-Socket──▶ nexo
   - **Auffüllungen werden gebucht:** am Tag des Dauerauftrags als „Auffüllung Pocket …“, ab dem Monat, in dem das Pocket angelegt wurde.
     - Sie zählen als Einnahme des Pockets, im Monat aber als Umbuchung, also weder als Einnahme noch als Ausgabe. Das Gehalt zählt dadurch nicht doppelt.
     - Gelöschte Auffüllungen kommen nicht wieder. Betrag und Tag einer Auffüllung lassen sich ändern.
+  - **Einkommensverteiler** (z. B. in der C24-Banking-App eingestellt): Ein Pocket lässt sich an eine feste Einnahme (Gehalt) koppeln.
+    - Ist das Gehalt gebucht, folgt am selben Tag die Auffüllung, höchstens eine je Monat. Den Betrag trägst du wie in der Bank-App fest ein.
+    - Wird die Gehaltsbuchung verschoben, zieht die Auffüllung mit. Wird sie gelöscht, fällt die Auffüllung weg.
+    - Die Vorschau rechnet mit den Gehaltstagen.
+    - Ohne Kopplung kommt die Auffüllung am festen Tag (Dauerauftrag).
   - Je Pocket rechnet die App: drauf − Abos & Verträge (anteilig) = frei − Ausgaben = übrig.
   - Reicht der Betrag nicht für die Verträge, warnt sie und nennt den fehlenden Betrag, z. B. „Dauerauftrag auf 920 € erhöhen“.
   - **Vorschau mit Stand (optional):** Stand und Datum eintragen, dazu den Tag des Dauerauftrags.
@@ -168,7 +173,7 @@ Alle Endpunkte außer `health`, `setup`, `login` und `logout` brauchen eine Sitz
 | GET/PUT/DELETE | `/api/caldav` | Kalenderserver anzeigen / verbinden (prüft zuerst) / trennen |
 | GET | `/api/budget?month=2026-11` | Monatsübersicht mit Plan (Gesamtbudget, Abos & Verträge anteilig, frei, übrig) |
 | PUT | `/api/budget/total` | Gesamtbudget pro Monat `{total_cents}`, 0 entfernt es (nur ohne Pockets) |
-| GET/POST, PUT/DELETE | `/api/pockets`, `/api/pockets/{id}` | Pockets `{name, color, monthly_cents, deposit_day, balance_cents, balance_on}`; Kategorien und Abos haben `pocket_id` |
+| GET/POST, PUT/DELETE | `/api/pockets`, `/api/pockets/{id}` | Pockets `{name, color, monthly_cents, deposit_day, income_id, balance_cents, balance_on}`; Kategorien und Abos haben `pocket_id` |
 | GET | `/api/pockets/{id}/forecast` | Vorschau 12 Monate mit allen Posten und erstem Engpass |
 | GET/PUT | `/api/notifications` | Telegram-Stand und Einstellungen `{digest, payments, payment_days, alerts, time}` |
 | PUT/DELETE | `/api/notifications/telegram` | Bot-Token prüfen und speichern / Verbindung trennen |

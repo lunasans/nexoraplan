@@ -644,6 +644,83 @@ func TestPocketTopups(t *testing.T) {
 	}
 }
 
+// Einkommensverteiler: Die Auffüllung folgt der Gehaltsbuchung.
+func TestIncomeDistribution(t *testing.T) {
+	s, c := testServer(t) // heute: 11.11.2026
+	setup(c)
+	var gehalt, miete db.Recurring
+	c.do("POST", "/api/recurring", map[string]any{"title": "Gehalt", "kind": "income", "amount_cents": 300000, "day": 1, "starts_on": "2026-11-01"}, 201, &gehalt)
+	c.do("POST", "/api/recurring", map[string]any{"title": "Miete", "kind": "expense", "amount_cents": 90000, "day": 3, "starts_on": "2026-11-03"}, 201, &miete)
+	c.do("POST", "/api/pockets", map[string]any{"name": "X", "monthly_cents": 100, "income_id": miete.ID}, 400, nil)
+	var jahr, haus db.Pocket
+	c.do("POST", "/api/pockets", map[string]any{"name": "Jährlich", "monthly_cents": 5000, "income_id": gehalt.ID}, 201, &jahr)
+	// Haushalt erst mit festem Tag (1.) – dann an das Gehalt gekoppelt: keine zweite Auffüllung im November
+	c.do("POST", "/api/pockets", map[string]any{"name": "Haushalt", "monthly_cents": 60000, "deposit_day": 1}, 201, &haus)
+
+	topups := func(month string) map[string][]db.Transaction {
+		t.Helper()
+		var b budgetView
+		c.do("GET", "/api/budget?month="+month, nil, 200, &b)
+		out := map[string][]db.Transaction{}
+		for _, tx := range b.Transactions {
+			if tx.Kind == "topup" {
+				name := map[uint64]string{jahr.ID: "Jährlich", haus.ID: "Haushalt"}[*tx.PocketID]
+				out[name] = append(out[name], tx)
+			}
+		}
+		return out
+	}
+	salary := func(month string) db.Transaction {
+		t.Helper()
+		var b budgetView
+		c.do("GET", "/api/budget?month="+month, nil, 200, &b)
+		for _, tx := range b.Transactions {
+			if tx.RecurringID != nil && *tx.RecurringID == gehalt.ID {
+				return tx
+			}
+		}
+		t.Fatalf("kein Gehalt im %s", month)
+		return db.Transaction{}
+	}
+
+	got := topups("2026-11")
+	if len(got["Jährlich"]) != 1 || got["Jährlich"][0].Day != "2026-11-01" || got["Jährlich"][0].AmountCents != 5000 || len(got["Haushalt"]) != 1 {
+		t.Fatalf("November: %+v", got)
+	}
+	c.do("PUT", fmt.Sprintf("/api/pockets/%d", haus.ID), map[string]any{"name": "Haushalt", "monthly_cents": 60000, "income_id": gehalt.ID}, 200, nil)
+	if got = topups("2026-11"); len(got["Haushalt"]) != 1 {
+		t.Fatalf("nach dem Koppeln doppelt: %+v", got["Haushalt"])
+	}
+
+	// Gehalt kam erst am 3.: Auffüllung zieht mit
+	g := salary("2026-11")
+	c.do("PUT", fmt.Sprintf("/api/transactions/%d", g.ID), map[string]any{"kind": "income", "amount_cents": 300000, "day": "2026-11-03"}, 200, nil)
+	if got = topups("2026-11"); got["Jährlich"][0].Day != "2026-11-03" {
+		t.Fatalf("Auffüllung nicht mitgezogen: %+v", got["Jährlich"])
+	}
+
+	// Dezember: Gehalt gebucht → beide Pockets am selben Tag; Gehalt gelöscht → Auffüllungen weg
+	berlin := s.loc
+	s.now = func() time.Time { return time.Date(2026, 12, 2, 9, 0, 0, 0, berlin) }
+	got = topups("2026-12")
+	if len(got["Jährlich"]) != 1 || len(got["Haushalt"]) != 1 || got["Haushalt"][0].Day != "2026-12-01" {
+		t.Fatalf("Dezember: %+v", got)
+	}
+	c.do("DELETE", fmt.Sprintf("/api/transactions/%d", salary("2026-12").ID), nil, 204, nil)
+	if got = topups("2026-12"); len(got) != 0 {
+		t.Fatalf("Gehalt gelöscht, Auffüllungen noch da: %+v", got)
+	}
+
+	// Vorschau rechnet mit den Gehaltstagen
+	c.do("PUT", fmt.Sprintf("/api/pockets/%d", jahr.ID), map[string]any{"name": "Jährlich", "monthly_cents": 5000, "income_id": gehalt.ID,
+		"balance_cents": 1000, "balance_on": "2026-12-02"}, 200, nil)
+	var f pocketForecast
+	c.do("GET", fmt.Sprintf("/api/pockets/%d/forecast", jahr.ID), nil, 200, &f)
+	if len(f.Events) == 0 || f.Events[0].Day != "2027-01-01" || f.Events[0].Title != "Auffüllung aus Gehalt" {
+		t.Fatalf("Vorschau: %+v", f.Events)
+	}
+}
+
 func TestCalDAVNeedsKey(t *testing.T) {
 	s, c := testServer(t)
 	setup(c)
