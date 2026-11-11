@@ -135,7 +135,7 @@ type weekResp struct {
 	Days      []weekDay
 	WeekTasks []db.Task `json:"week_tasks"`
 	Budget    struct {
-		Planned int64 `json:"planned_cents"`
+		Planned  int64 `json:"planned_cents"`
 		Spent    int64 `json:"spent_cents"`
 		Budgeted int64 `json:"budgeted_cents"`
 	} `json:"budget"`
