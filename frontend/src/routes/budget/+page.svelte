@@ -155,8 +155,8 @@
         {#each data.categories as c (c.id)}
           <div class="cat-row">
             <span class="name"><span class="dot" style="background: {c.color}"></span><span>{c.name}</span></span>
-            <span class="nums">{money(c.spent_cents)}</span>
-            {#if c.fixed_cents}<span class="small muted" style="grid-column: 1 / -1">dazu {money(c.fixed_cents)} aus Abos &amp; Verträgen</span>{/if}
+            <span class="nums">{money(c.spent_cents + c.fixed_cents)}</span>
+            {#if c.fixed_cents}<span class="small muted" style="grid-column: 1 / -1">{c.spent_cents ? `davon ${money(c.fixed_cents)} ` : ''}aus Abos &amp; Verträgen</span>{/if}
           </div>
         {:else}
           <p class="card-body empty">Noch keine Kategorien. <a href="/budget/kategorien">Anlegen</a></p>
