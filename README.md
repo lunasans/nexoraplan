@@ -144,12 +144,13 @@ Entwicklungsserver auf http://localhost:5173, der API-Anfragen an Port 8090 weit
 ## Mit NexoraPanel installieren
 
 1. Release veröffentlichen – geht auch vom Handy:
-   - **Automatisch:** Jeder Push bzw. gemergte PR auf `main` startet die Action „Release“. Sie prüft alles (Oberfläche, `go vet`, Tests mit MariaDB) und legt den GitHub-Release `v<Datum>` an (`nexoraplan-linux-amd64` + `.sha256`).
+   - **Automatisch:** Jeder Push bzw. gemergte PR auf `main` startet die Action „Release“. Sie prüft alles (Oberfläche, `go vet`, Tests mit MariaDB) und legt den Release im nexora/App-Store an (`lunasans/nexora-app-store`, Tag `nexoraplan-v<Datum>`, Dateien `nexoraplan-linux-amd64` + `.sha256`). Im eigenen Repo entsteht kein Release.
    - **Von Hand:** GitHub (auch in der App) → Actions → „Release“ → *Run workflow*.
    - Am Windows-Rechner geht weiterhin `.\release.ps1`.
    - Pull Requests werden von derselben Action nur geprüft, nicht veröffentlicht.
-2. Im Panel einmalig unter **Einstellungen → App-Quelle** das Repo `lunasans/nexoraplan` und ein Lese-Token eintragen.
-   - Das Token fein-granular anlegen, nur für dieses Repo, Berechtigung *Contents: Read*.
+2. Im Panel unter **Einstellungen → nexora/App-Store** ist der App-Store einmal eingerichtet (GitHub App
+   „nexora-store-read“) – für diese App ist dort nichts einzutragen.
+   - Die Action braucht die Secrets `STORE_APP_ID` und `STORE_PRIVATE_KEY` der GitHub App „nexora-store-publish“.
 3. Domain → Reiter **Apps** → nexora/plan → *Von GitHub installieren*.
    - Das Panel legt Datenbank, Env-Datei mit Schlüssel und den Dienst `nexoraplan-<domain>` an.
    - Ist SOGo eingerichtet, trägt es die Kalender-Adresse als Vorschlag ein.
