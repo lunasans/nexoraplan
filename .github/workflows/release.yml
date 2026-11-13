@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read # Releases entstehen nur im nexora/App-Store
 
 concurrency:
   group: release-${{ github.ref }}
@@ -35,6 +35,8 @@ jobs:
           --health-interval=5s --health-timeout=5s --health-retries=20
     env:
       ASSET: nexoraplan-linux-amd64
+      # nexora/App-Store: GitHub App „nexora-store-publish“ (darf nur dort schreiben).
+      STORE_APP_ID: ${{ secrets.STORE_APP_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -48,13 +50,29 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Releases gibt es nur im nexora/App-Store – von dort lädt das Panel. Das Token
+      # braucht es schon hier: Die Version zählt die Releases dieser App im Store.
+      - name: Token für den nexora/App-Store
+        id: store
+        if: env.STORE_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.STORE_APP_ID }}
+          private-key: ${{ secrets.STORE_PRIVATE_KEY }}
+          owner: lunasans
+          repositories: nexora-app-store
+
       - name: Version festlegen (Datum, zweiter Release am Tag = .2)
         id: version
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.store.outputs.token }}
         run: |
           v=$(TZ=Europe/Berlin date +%Y.%m.%d)
-          last=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // ""' | sed 's/^v//')
+          last=""
+          if [ -n "$GH_TOKEN" ]; then
+            last=$(gh release list --repo lunasans/nexora-app-store --limit 100 --json tagName \
+              --jq '[.[].tagName | select(startswith("nexoraplan-v"))][0] // ""' | sed 's/^nexoraplan-v//')
+          fi
           if [ "$last" = "$v" ]; then
             v="$v.2"
           elif [ -n "$last" ] && [ "${last#"$v."}" != "$last" ]; then
@@ -90,11 +108,13 @@ jobs:
           go build -trimpath -ldflags "-s -w -X nexoraplan/internal/server.Version=${{ steps.version.outputs.version }}" -o "build/$ASSET" ./cmd/server
           cd build && sha256sum "$ASSET" > "$ASSET.sha256" && cat "$ASSET.sha256"
 
-      - name: Release veröffentlichen
+      - name: Im nexora/App-Store veröffentlichen
         if: github.event_name != 'pull_request'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.store.outputs.token }}
         run: |
-          gh release create "v${{ steps.version.outputs.version }}" "build/$ASSET" "build/$ASSET.sha256" \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "nexora/plan ${{ steps.version.outputs.version }}" --generate-notes
+          test -n "$GH_TOKEN" || { echo "::error::Secrets STORE_APP_ID / STORE_PRIVATE_KEY fehlen – ohne sie kein Release"; exit 1; }
+          v="${{ steps.version.outputs.version }}"
+          gh release create "nexoraplan-v$v" "build/$ASSET" "build/$ASSET.sha256" \
+            --repo lunasans/nexora-app-store --title "nexora/plan $v" \
+            --notes "Aus $GITHUB_REPOSITORY@$GITHUB_SHA."

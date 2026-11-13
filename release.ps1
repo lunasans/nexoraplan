@@ -1,5 +1,6 @@
-# Baut nexora/plan fuer Linux (amd64) und veroeffentlicht es als GitHub-Release.
-# NexoraPanel laedt das Binary von dort (Domain -> Apps -> "Von GitHub installieren").
+# Baut nexora/plan fuer Linux (amd64) und veroeffentlicht es im
+# nexora/App-Store (lunasans/nexora-app-store, Tag nexoraplan-v<Version>). NexoraPanel laedt es
+# von dort (Domain -> Apps -> "Von GitHub installieren"). Im eigenen Repo entsteht kein Release.
 #
 # Aufruf:  .\release.ps1                      # Version = heutiges Datum
 #          .\release.ps1 -Version 2026.10.22  # Version fest vorgeben
@@ -34,14 +35,15 @@ if ((git rev-parse HEAD) -ne (git rev-parse origin/main)) { throw "Lokaler Stand
 
 if (-not $Version) {
     $Version = Get-Date -Format "yyyy.MM.dd"
-    $last = (gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>$null)
-    if ($last) { $last = $last.Trim().TrimStart("v") }
+    # Zaehlt die Releases dieser App im nexora/App-Store (Tag nexoraplan-v<Version>)
+    $last = (gh release list --repo lunasans/nexora-app-store --limit 100 --json tagName --jq '[.[].tagName | select(startswith("nexoraplan-v"))][0] // ""' 2>$null)
+    if ($last) { $last = $last.Trim().Substring("nexoraplan-v".Length) }
     if ($last -eq $Version -or ($last -and $last.StartsWith("$Version."))) {
         $n = if ($last -eq $Version) { 2 } else { [int]$last.Substring($Version.Length + 1) + 1 }
         $Version = "$Version.$n"
     }
 }
-$Tag = "v$Version"
+$Tag = "nexoraplan-v$Version"
 Write-Host "==> Release $Tag"
 
 Write-Host "==> Baue Oberflaeche (SvelteKit) ..."
@@ -75,8 +77,8 @@ finally {
 $hash = (Get-FileHash "build/$Asset" -Algorithm SHA256).Hash.ToLower()
 [System.IO.File]::WriteAllText("$PSScriptRoot/build/$Asset.sha256", "$hash  $Asset`n")
 
-Write-Host "==> Veroeffentliche auf GitHub ..."
-gh release create $Tag "build/$Asset" "build/$Asset.sha256" --target main --title "nexora/plan $Version" --generate-notes
+Write-Host "==> Veroeffentliche im nexora/App-Store ..."
+gh release create $Tag "build/$Asset" "build/$Asset.sha256" --repo lunasans/nexora-app-store --title "nexora/plan $Version" --notes "Aus lunasans/nexoraplan@$(git rev-parse --short HEAD)."
 if ($LASTEXITCODE -ne 0) { throw "gh release create fehlgeschlagen" }
 
 Write-Host "==> Fertig: $Tag ($hash)"
